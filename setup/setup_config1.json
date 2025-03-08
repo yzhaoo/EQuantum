@@ -74,6 +74,21 @@
             "potential": 0.0,
             "dielectric_constant": 1.0,
             "BCtype": "d"
+        },
+        {
+            "name": "gate",
+            "bbox": {
+                "xmin": -1.0,
+                "xmax": 1.0,
+                "ymin": -1.0,
+                "ymax": 1.0,
+                "zmin": 0.20000004768371582,
+                "zmax": 2.200000047683716
+            },
+            "charge": 0.0,
+            "potential": 0.30000001192092896,
+            "dielectric_constant": 1.0,
+            "BCtype": "d"
         }
     ]
 }

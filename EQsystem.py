@@ -16,7 +16,7 @@ import def_system_func as systemfunc
 # from site_module import Site
 
 class System:
-    def __init__(self, geometry_params, config_file=None,ifqsystem=False,quantum_builder="kwant"):
+    def __init__(self, geometry_params, config_file=None,assign_mat=False,ifqsystem=False,quantum_builder="kwant"):
         """
         Initialize the System by building the 3D geometry and assigning site properties.
 
@@ -46,19 +46,19 @@ class System:
         # Here we simply create a Site for each point with default values.
         self.sites = systemfunc.create_sites_from_geometry_3d(self.geometry)
         self.num_sites=len(self.sites)
-        
-        # Load configuration file defining regions and material properties.
-        self.config_data = self.load_config(config_file)
-        
-        # Assign physical properties (material, charge, potential, dielectric, BCtype) to the sites.
-        self.assign_properties()
-        #initialze the material indices
-        self.material_indices = {}  # Dictionary to hold indices by material type.
-        self.initialize_material_indices()
-        self.Qsites=self.material_indices['Qsystem']
-        #initialize the site type
-        self.N_indices = [i for i, site in self.sites.items() if site.BCtype == "n"]
-        self.D_indices = [i for i, site in self.sites.items() if site.BCtype == "d"]
+        if assign_mat:
+            # Load configuration file defining regions and material properties.
+            self.config_data = self.load_config(config_file)
+            
+            # Assign physical properties (material, charge, potential, dielectric, BCtype) to the sites.
+            self.assign_properties()
+            #initialze the material indices
+            self.material_indices = {}  # Dictionary to hold indices by material type.
+            self.initialize_material_indices()
+            self.Qsites=self.material_indices['Qsystem']
+            #initialize the site type
+            self.N_indices = [i for i, site in self.sites.items() if site.BCtype == "n"]
+            self.D_indices = [i for i, site in self.sites.items() if site.BCtype == "d"]
 
         #initialize quantum system
         self.qsystem=None
@@ -230,4 +230,23 @@ class System:
         ax.set_title("System Sites")
         ax.legend()
         plt.show()
+
+    def export_sites(self, filename="sites.json"):
+        """
+        Export the sites from the System as a JSON file.
+        Each site is represented by its properties (id, coordinates, material, etc.).
+        """
+        data = []
+        for site in self.sites.values():
+            data.append({
+                "id": site.id,
+                "coordinates": site.coordinates.tolist(),  # convert np.array to list
+                "material": site.material,
+                "charge": site.charge,
+                "potential": site.potential,
+                "dielectric_constant": site.dielectric_constant,
+                "BCtype": site.BCtype
+            })
+        with open(filename, "w") as f:
+            json.dump(data, f, indent=4)
 
