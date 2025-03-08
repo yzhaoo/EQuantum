@@ -1,5 +1,6 @@
 import json
 import numpy as np
+import mathutils
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D  # needed for 3D plotting
 import matplotlib.cm as cm
@@ -16,7 +17,7 @@ import def_system_func as systemfunc
 # from site_module import Site
 
 class System:
-    def __init__(self, geometry_params, config_file=None,assign_mat=False,ifqsystem=False,quantum_builder="kwant"):
+    def __init__(self, geometry_params, config_file=None,ifqsystem=False,quantum_builder="kwant"):
         """
         Initialize the System by building the 3D geometry and assigning site properties.
 
@@ -46,25 +47,22 @@ class System:
         # Here we simply create a Site for each point with default values.
         self.sites = systemfunc.create_sites_from_geometry_3d(self.geometry)
         self.num_sites=len(self.sites)
-        if assign_mat:
+        self.material_indices={}
+        self.Qsites=None
+        self.N_indices=None
+        self.D_indices=None
+        if config_file is not None:
             # Load configuration file defining regions and material properties.
-            self.config_data = self.load_config(config_file)
-            
-            # Assign physical properties (material, charge, potential, dielectric, BCtype) to the sites.
-            self.assign_properties()
-            #initialze the material indices
-            self.material_indices = {}  # Dictionary to hold indices by material type.
-            self.initialize_material_indices()
-            self.Qsites=self.material_indices['Qsystem']
-            #initialize the site type
-            self.N_indices = [i for i, site in self.sites.items() if site.BCtype == "n"]
-            self.D_indices = [i for i, site in self.sites.items() if site.BCtype == "d"]
+            self.update_sites_from_blender(filename=config_file)
 
         #initialize quantum system
         self.qsystem=None
         if ifqsystem:
-            self.build_qsystem(quantum_builder)
-            print("Quantum system is generated using "+quantum_builder+".")
+            if self.Qsites ==None:
+                print("No site has been assigned to the quantum system.")
+            else:
+                self.build_qsystem(quantum_builder)
+                print("Quantum system is generated using "+quantum_builder+".")
         print("EQsystem is successfully initialized.")
     def build_geometry(self):
         self.geometry= Geometry3D(lattice_type=self.geometry_params["lattice_type"],
@@ -89,62 +87,12 @@ class System:
             with open(config_file, 'r') as f:
                 config_data = json.load(f)
             return config_data
-
-    def assign_properties(self):
-        """
-        Assign physical properties to each site based on the configuration regions.
-        
-        If a site's z coordinate is approximately zero (within a tolerance),
-        the function first checks if it falls within the Qsystem region.
-        If so, it assigns the Qsystem properties and skips further region checks.
-        Otherwise, it checks the remaining regions.
-        """
-        regions = self.config_data.get("regions", [])
-        
-        for site in self.sites.values():
-            x, y, z = site.coordinates
-            # First, if z is approximately 0, check Qsystem region.
-            if z==0.:
-                qsystem_found = False
-                for region in regions:
-                    if region.get("name", "").lower() == "qsystem":
-                        bbox = region.get("bbox", {})
-                        xmin = bbox.get("xmin", -np.inf)
-                        xmax = bbox.get("xmax", np.inf)
-                        ymin = bbox.get("ymin", -np.inf)
-                        ymax = bbox.get("ymax", np.inf)
-                        zmin = bbox.get("zmin", -np.inf)
-                        zmax = bbox.get("zmax", np.inf)
-                        if (xmin <= x <= xmax) and (ymin <= y <= ymax) and (zmin <= z <= zmax):
-                            # Assign Qsystem properties.
-                            site.material = region.get("name", site.material)
-                            site.charge = region.get("charge", site.charge)
-                            site.potential = region.get("potential", site.potential)
-                            site.dielectric_constant = region.get("dielectric_constant", site.dielectric_constant)
-                            site.BCtype = region.get("BCtype", site.BCtype)
-                            qsystem_found = True
-                            break
-                # If the site at z=0 is in the Qsystem region, no need to check other regions.
-                if qsystem_found:
-                    continue
-            
-            # For all sites (including those with z != 0 or z==0 that weren't in Qsystem),
-            # check each region (if a site falls into multiple regions, you may decide to break after the first match).
-            for region in regions:
-                bbox = region.get("bbox", {})
-                xmin = bbox.get("xmin", -np.inf)
-                xmax = bbox.get("xmax", np.inf)
-                ymin = bbox.get("ymin", -np.inf)
-                ymax = bbox.get("ymax", np.inf)
-                zmin = bbox.get("zmin", -np.inf)
-                zmax = bbox.get("zmax", np.inf)
-                if (xmin <= x <= xmax) and (ymin <= y <= ymax) and (zmin <= z <= zmax):
-                    site.material = region.get("name", site.material)
-                    site.charge = region.get("charge", site.charge)
-                    site.potential = region.get("potential", site.potential)
-                    site.dielectric_constant = region.get("dielectric_constant", site.dielectric_constant)
-                    site.BCtype = region.get("BCtype", site.BCtype)
-                    break
+    def update_mat_indices(self):
+        self.initialize_material_indices()
+        self.Qsites=self.material_indices['Qsystem']
+        #initialize the site type
+        self.N_indices = [i for i, site in self.sites.items() if site.BCtype == "n"]
+        self.D_indices = [i for i, site in self.sites.items() if site.BCtype == "d"]
 
     def initialize_material_indices(self):
         """
@@ -170,8 +118,8 @@ class System:
             self.material_indices[mat].append(i)
         return self.material_indices
     
-    def build_qsystem(self,quantum_builder):
-        self.qsystem=qs.build_system(self.Qsites,builder=quantum_builder)
+    def build_qsystem(self,quantum_builder,**kwarg):
+        self.qsystem=qs.build_system(self,builder=quantum_builder,**kwarg)
 
     def plot_geometry(self, prop=None):
         """
@@ -249,4 +197,38 @@ class System:
             })
         with open(filename, "w") as f:
             json.dump(data, f, indent=4)
+
+    def update_sites_from_blender(self, filename="updated_sites.json"):
+        """
+        Load updated site information from a JSON file and update the corresponding Site objects.
+        
+        The JSON file is expected to be a list of dictionaries where each dictionary represents
+        a site with keys like "id", "coordinates", "material", "charge", "potential", "dielectric_constant", and "BCtype".
+        """
+        with open(filename, "r") as f:
+            updated_data = json.load(f)
+        
+        if len(updated_data) != self.num_sites:
+            print("The total number of sites of the current system doesn't match with the provided config file.")
+        
+        for entry in updated_data:
+            site_id = entry.get("id")
+            if site_id is None:
+                continue  # Skip entries without an id.
+            # Check if this site exists in the system.
+            if site_id in self.sites:
+                site = self.sites[site_id]
+                # Update the site's properties. You can also update coordinates if needed.
+                # Note: if the coordinates are stored as a mathutils.Vector, convert the list back.
+                coords = entry.get("coordinates")
+                if coords is not None:
+                    site.coordinates = mathutils.Vector(coords)
+                site.material = entry.get("material", site.material)
+                site.charge = entry.get("charge", site.charge)
+                site.potential = entry.get("potential", site.potential)
+                site.dielectric_constant = entry.get("dielectric_constant", site.dielectric_constant)
+                site.BCtype = entry.get("BCtype", site.BCtype)
+            else:
+                print(f"Warning: Site with id {site_id} not found in the system.")
+        self.update_mat_indices()
 
