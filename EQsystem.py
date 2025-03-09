@@ -56,7 +56,9 @@ class System:
             self.update_sites_from_blender(filename=config_file)
 
         #initialize quantum system
+        self.t=1
         self.qsystem=None
+        self.qsite_map=None
         if ifqsystem:
             if self.Qsites ==None:
                 print("No site has been assigned to the quantum system.")

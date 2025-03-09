@@ -1,5 +1,6 @@
 # self_consistent_solver.py
-
+import poissonsolver as psolver
+import numpy as np
 class FSC:
     def __init__(self, system, quantum_solver, poisson_solver, convergence_tol=1e-6, max_iter=50):
         """
@@ -12,7 +13,29 @@ class FSC:
           - convergence_tol: tolerance for convergence.
           - max_iter: maximum number of iterations allowed.
         """
-        self.system = system
+        #quantities
+        #initialized from System
+        self.sites = system.sites.copy()
+        self.ni=np.array([site.charge for i, site in self.sites.items()])
+        self.Ui=np.array([site.potential for i, site in self.sites.items()])
+        self.N_indices = system.N_indices.copy()
+        self.D_indices = system.D_indices.copy()
+        #initialize with Poisson solver parameters
+        self.Ci=None
+        self.A_mixed=None
+        self.F_input=None
+        self.Delta_matrix= None
+
+        #initialize with quantum solver parameters
+        self.qparams={}
+        self.ildos=None
+        self.Qprime=system.Qsites.copy()
+        self.qsystem=system.qsystem.copy()
+        
+        #initialize Posisson problem
+
+        #initialize Quantum problem
+
         self.quantum_solver = quantum_solver
         self.poisson_solver = poisson_solver
         self.convergence_tol = convergence_tol
@@ -30,6 +53,29 @@ class FSC:
         # To store metrics for convergence (e.g., previous potential or density)
         self.prev_potential = None
         self.prev_density = None
+    
+    def initial_Poisson(self):
+        """
+        initialize the Poisson problem without Quantum system for the given boundary condition.
+         
+        """
+        #initialized Delta_matrix and A_mixed
+        psolver.calculate_delta(self)
+        #solve the initial ND poisson problem and update ni, Ui
+        UnnD=psolver.solve_NDpoisson(self)
+        self.ni[self.D_indices]=UnnD[self.N_indices:]
+        self.Ui[self.N_indices]=UnnD[:self.N_indices]
+        #initialized Ci
+        self.Ci=psolver.solve_capacitance(self)
+        print("The poisson problem has been initialized.")
+
+    def initial_Quantum(self):
+        """
+        initialize the Quantum problem without the external electristatic field, yield initial ILDOS
+
+        """
+
+        
 
     def iterate(self):
         """
