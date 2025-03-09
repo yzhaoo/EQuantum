@@ -1,5 +1,6 @@
 # self_consistent_solver.py
 import poissonsolver as psolver
+import qsystem as qsolver
 import numpy as np
 class FSC:
     def __init__(self, system, quantum_solver, poisson_solver, convergence_tol=1e-6, max_iter=50):
@@ -29,8 +30,10 @@ class FSC:
         #initialize with quantum solver parameters
         self.qparams={}
         self.ildos=None
+        self.Qsites=system.Qsites
         self.Qprime=system.Qsites.copy()
         self.qsystem=system.qsystem.copy()
+        self.Qsites_map={}
         
         #initialize Posisson problem
 
@@ -69,13 +72,21 @@ class FSC:
         self.Ci=psolver.solve_capacitance(self)
         print("The poisson problem has been initialized.")
 
-    def initial_Quantum(self):
+    def initial_Quantum(self,system,**kwarg):
         """
         initialize the Quantum problem without the external electristatic field, yield initial ILDOS
 
         """
+        if system.quantum_builder=="kwant":
+            #initialize the site map between Qsysetm and kwant system
+            qsolver.kwant_site_map_from_Qsites(self,system)
+            #initialize the potential function Ufunc
+            qsolver.kwant_update_Ufunc(self,system)
+            #calculate and update onsite charge density through ED
+            self.ni+=qsolver.kwant_density_ED(self)
+            #calculate the initial ildos
+            self.ildos=qsolver.kwant_ildos_kpm(self,**kwarg)
 
-        
 
     def iterate(self):
         """
@@ -138,3 +149,5 @@ class FSC:
         if pot_diff < self.convergence_tol and dens_diff < self.convergence_tol:
             return True
         return False
+    
+

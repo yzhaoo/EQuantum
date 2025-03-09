@@ -1,5 +1,8 @@
 import kwant
 import numpy as np
+from tqdm import tqdm
+import scipy.linalg as sl
+from scipy.spatial import KDTree
 
 
 def build_system(syst,builder="kwant",**kwarg):
@@ -28,12 +31,13 @@ def kwant_builder(syst):
         return Ufunc(site)
 
     #get the coordinate of the sites belongs to the quantum system
-    qcoor=[list(syst.sites.values())[i].coordinates for i in syst.Qsites]
+    qcoor=np.array([list(syst.sites.values())[i].coordinates for i in syst.Qsites])
+    qcoor=qcoor[:,[0,1]]
     primi=[(coor[0],coor[1]) for coor in qcoor]
 
     #create lattice from the coordinates
     qsyst=kwant.Builder()
-    lat=kwant.lattice.general([(-1000,0),(0,1000)],primi)
+    lat=kwant.lattice.general([(-1000,0),(0,1000)],primi,norbs=1)
 
     #cut the finite size sample from the size of Qsystem
     qsitebox=[[min(qcoor[:,0]),max(qcoor[:,0])],[min(qcoor[:,1]),max(qcoor[:,1])]]
@@ -44,7 +48,7 @@ def kwant_builder(syst):
     qsite_idx_map = { site_idx: q_idx for q_idx, site_idx in enumerate(syst.Qsites) }
     #add hopping amplitude, this step takes long
     latsites=lat.sublattices
-    for idx in syst.Qsites:
+    for idx in tqdm(syst.Qsites):
         site = syst.sites[idx]
         qidx = qsite_idx_map[idx]
         for idxn in site.neighbors.keys():
@@ -60,14 +64,58 @@ def kwant_builder(syst):
     #(if) add lead here
 
     return qsyst.finalized()
+def kwant_site_map_from_Qsites(fsc,syst):
+    #key: index in Qsites, values: index in Kwant sites
+    kcoord=np.array([site.pos for site in syst.qsystem.sites])
+    qcoord=np.array([list(syst.sites.values())[i].coordinates for i in syst.Qsites])
+    # Build a KDTree on the Kwant coordinates.
+    tree = KDTree(kcoord)
+    # Define a threshold for matching (this depends on your precision; adjust as needed)
+    threshold = 1e-8
+    # Create a dictionary (or array) to store the mapping: 
+    # mapping[i] will be the index in kwant_coords corresponding to input_coords[i].
+    mapping = {}
+    for i, coord in enumerate(qcoord):
+        # Query the KDTree for the nearest neighbor.
+        dist, idx = tree.query(coord)
+        # Optionally, you can check if the distance is below a threshold.
+        if dist < threshold:
+            mapping[i] = idx
+        else:
+            # Even if the distance is larger than expected, you might decide to assign it anyway.
+            mapping[i] = idx
+    # mapping now gives the index correspondence between input_coords and kwant_coords.
+    fsc.Qsites_map=mapping
 
+def kwant_update_Ufunc(fsc,syst):
+    ksite_dict={ ksite : k_idx for k_idx, ksite in enumerate(syst.qsystem.sites)}
+    kUlist=np.array([fsc.Ui[syst.Qsites[qidx]] for qidx in range(len(fsc.Qsites_map))])
+    kUlist=kUlist[list(fsc.Qsites_map.values())]
+    def Ufunc(site):
+        return kUlist[ksite_dict[site]]
+    fsc.qparams['Ufunc']=Ufunc
 
-def kwant_ildos_solver(fsc,murange,**kwarg):
+def kwant_density_ED(fsc):
+    k_to_q_map=range(len(fsc.Qsites))[np.argsort(list(fsc.Qsites_map.values()))]
+    ham_mat=fsc.qsystem.hamiltonian_submatrix(params=fsc.qparams)
+    ew,ev=sl.eigh(ham_mat)
+    sort_idx=np.argsort(ev)
+
+    nden=np.zeros(len(fsc.ni))
+
+    for eidx,ee in enumerate(ev):
+        if ee <0:
+            kdos=np.abs(ew[sort_idx[eidx],:])
+            nden[fsc.Qsites]+=kdos[k_to_q_map]
+
+    return nden
+
+def kwant_ildos_kpm(fsc,**kwarg):
     # use the bulk LDOS (Thomas-Fermi approximation)
     spectrum=kwant.kpm.SpectralDensity(fsc.qsystem,
                                        params=fsc.qparams,
-                                       energy_resolution=(murange[1]-murange[0])/5)
-    _,densities=spectrum()
-    return densities(murange)
+                                       energy_resolution=0.02,**kwarg)
+    return spectrum()
+
 
 
