@@ -1,12 +1,12 @@
 import json
 import numpy as np
-import mathutils
+#import mathutils
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D  # needed for 3D plotting
 import matplotlib.cm as cm
 import matplotlib.colors as mcolors
 
-import qsystem as qs
+import qbuilder as qbuilder
 from geometry import Geometry3D
 from sites import Site
 import def_system_func as systemfunc
@@ -17,7 +17,7 @@ import def_system_func as systemfunc
 # from site_module import Site
 
 class System:
-    def __init__(self, geometry_params, config_file=None,ifqsystem=False,quantum_builder="kwant"):
+    def __init__(self, geometry_params, config_file=None,ifqsystem=False,t=1,quantum_builder="default"):
         """
         Initialize the System by building the 3D geometry and assigning site properties.
 
@@ -46,6 +46,7 @@ class System:
         # Build Site objects from the geometry points.
         # Here we simply create a Site for each point with default values.
         self.sites = systemfunc.create_sites_from_geometry_3d(self.geometry)
+        self.remove_dangling_site()
         self.num_sites=len(self.sites)
         self.material_indices={}
         self.Qsites=None
@@ -56,7 +57,7 @@ class System:
             self.update_sites_from_blender(filename=config_file)
 
         #initialize quantum system
-        self.t=1
+        self.t=t
         self.qsystem=None
         self.qsite_map=None
         self.quantum_builder=quantum_builder
@@ -67,11 +68,39 @@ class System:
                 self.build_qsystem(quantum_builder)
                 print("Quantum system is generated using "+quantum_builder+".")
         print("EQsystem is successfully initialized.")
+
+
+
     def build_geometry(self):
         self.geometry= Geometry3D(lattice_type=self.geometry_params["lattice_type"],
                                    box_size=self.geometry_params["box_size"],
                                    sampling_density_function=self.geometry_params["sampling_density_function"],
                                    quantum_center=self.geometry_params.get("quantum_center", (0.0, 0.0, 0.0)))
+
+    def remove_dangling_site(self):
+        """remove the dangling sites, which leads to the sigularities in Posisson problem
+        """
+        num_sites=len(self.sites)
+        no_neighbor =np.array([idx for idx in range(num_sites) if self.sites[idx].neighbors=={}])
+        #print(no_neighbor)
+        sites_idx=np.array(range(num_sites))
+        new_site_dict={}
+        old_to_new_map={idx:nidx for nidx, idx in enumerate(np.delete(sites_idx,no_neighbor))}
+        #update site index and id
+        for nidx, idx in enumerate(np.delete(sites_idx,no_neighbor)):
+            nsite=self.sites[idx]
+            nsite.id=nidx
+            n_neighbors={}
+            #update neighbor index
+            for nn in list(nsite.neighbors.keys()):
+                n_neighbors[old_to_new_map[nn]]=nsite.neighbors[nn]
+            nsite.neighbors=n_neighbors
+            new_site_dict[nidx]=nsite
+        self.sites=new_site_dict
+
+        
+        
+        print("%d sites have been removed from the system." %len(no_neighbor))
 
     def load_config(self, config_file):
         """
@@ -94,8 +123,8 @@ class System:
         self.initialize_material_indices()
         self.Qsites=self.material_indices['Qsystem']
         #initialize the site type
-        self.N_indices = [i for i, site in self.sites.items() if site.BCtype == "n"]
-        self.D_indices = [i for i, site in self.sites.items() if site.BCtype == "d"]
+        self.N_indices = np.array([i for i, site in self.sites.items() if site.BCtype == 1])
+        self.D_indices = np.array([i for i, site in self.sites.items() if site.BCtype == 0])
 
     def initialize_material_indices(self):
         """
@@ -122,7 +151,7 @@ class System:
         return self.material_indices
     
     def build_qsystem(self,quantum_builder,**kwarg):
-        self.qsystem=qs.build_system(self,builder=quantum_builder,**kwarg)
+        self.qsystem=qbuilder.build_system(self,builder=quantum_builder,**kwarg)
 
     def plot_geometry(self, prop=None):
         """
@@ -225,7 +254,7 @@ class System:
                 # Note: if the coordinates are stored as a mathutils.Vector, convert the list back.
                 coords = entry.get("coordinates")
                 if coords is not None:
-                    site.coordinates = mathutils.Vector(coords)
+                    site.coordinates = coords
                 site.material = entry.get("material", site.material)
                 site.charge = entry.get("charge", site.charge)
                 site.potential = entry.get("potential", site.potential)

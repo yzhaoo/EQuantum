@@ -1,6 +1,7 @@
 import numpy as np
-from scipy.sparse import lil_matrix, identity, hstack, vstack, spsolve
-import mumps
+from scipy.sparse import lil_matrix, identity, hstack, vstack
+from scipy.sparse.linalg import spsolve
+#import mumps
 
 # class PoissonSolver:
 #     def __init__(fsc, sites):
@@ -31,6 +32,10 @@ import mumps
     
 
 def calculate_delta(fsc):
+    lat_spacing=fsc.geometry_params['sampling_density_function'](0.0)
+    #change density unit to #/site
+    Cunit=55.2634936
+
 
     total = fsc.num_sites
 
@@ -44,9 +49,9 @@ def calculate_delta(fsc):
         diag_val = 0.0
         for j, face_area in site.neighbors.items():
             neighbor = fsc.sites[j]
-            d = np.linalg.norm(site.coordinates - neighbor.coordinates)
+            d = np.linalg.norm(np.array(site.coordinates) - np.array(neighbor.coordinates))
             avg_dielectric = 2.0 /(1/site.dielectric_constant + 1/neighbor.dielectric_constant)
-            coeff = avg_dielectric * face_area / d
+            coeff = avg_dielectric * face_area * Cunit / d
             diag_val += coeff
             A_full[i, j] = -coeff
         A_full[i, i] = diag_val
@@ -72,7 +77,7 @@ def calculate_delta(fsc):
     #update the A_mixied
     fsc.A_mixed = vstack([top_block, bottom_block]).tocsr()
 
-def assemble_input(fsc, n_N, U_D):
+def assemble_input(fsc,n_N, U_D):
     [_,A_ND,_,A_DD]=fsc.Delta_matrix
     # Now, construct the input vector F_input.
     # For Neumann sites: F_top = n_N - Δ_ND * U_D,
@@ -86,7 +91,7 @@ def assemble_input(fsc, n_N, U_D):
     fsc.F_input = np.concatenate([F_top, F_bottom])
     return fsc.F_input
 
-def solve(fsc, A,F, solver="mumps"):
+def solve(A,F, solver="scipy"):
     if solver=="scipy":
         solver_func=scipy_solver
     elif solver=="mumps":
@@ -110,26 +115,31 @@ def solve_capacitance(fsc,**kwargs):
     N_sites_num=len(fsc.N_indices)
     D_sites_num=len(fsc.D_indices)
     n_N = np.zeros(N_sites_num)
-    U_D = np.zeros(D_sites_num)
+    U_D = np.zeros(fsc.num_sites)
     common_indices_N = list(set(fsc.Qprime).intersection(fsc.N_indices))
     common_indices_D = list(set(fsc.Qprime).intersection(fsc.D_indices))
-    for idx in common_indices_N:
-        n_N[idx]=fsc.sites[idx].charge
+    where_Qp_in_D=[]
+    for didx,idx in enumerate(fsc.D_indices):
+        if fsc.sites[idx].material=='Qsystem':
+            where_Qp_in_D.append(didx)
+
+    # for Nidx,idx in enumerate(common_indices_N):
+    #     n_N[Nidx]=fsc.sites[idx].charge
     for idx in common_indices_D:
         U_D[idx]= 1.
-
-    sol= fsc.solve(fsc.A_mixed,fsc.assemble_input(n_N,U_D),**kwargs)
-    return sol[N_sites_num:]
+    U_D=U_D[fsc.D_indices]
+    sol= solve(fsc.A_mixed,assemble_input(fsc,n_N,U_D),**kwargs)
+    return sol[-D_sites_num:][np.array(where_Qp_in_D)]
 
 def solve_NDpoisson(fsc,**kwargs):
     N_sites_num=len(fsc.N_indices)
     n_N = np.zeros(N_sites_num)
     common_indices_N = list(set(fsc.Qprime+fsc.material_indices["dopants"]).intersection(fsc.N_indices))
-    for idx in common_indices_N:
-        n_N[idx]=fsc.sites[idx].charge
+    for nNidx,idx in enumerate(common_indices_N):
+        n_N[nNidx]=fsc.sites[idx].charge
     U_D = np.array([fsc.sites[i].potential for i in fsc.D_indices])
 
-    sol= fsc.solve(fsc.A_mixed,fsc.assemble_input(n_N,U_D),**kwargs)
+    sol= solve(fsc.A_mixed,assemble_input(fsc,n_N,U_D),**kwargs)
     return sol
 
 

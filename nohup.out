@@ -1,0 +1,90 @@
+python: can't open file '/scratch/zhaoyuha/EQuantum/testrun.py': [Errno 2] No such file or directory
+Generated 166307 points in 3D.
+Voronoi cells have been created.
+1 sites have been removed from the system.
+Quantum system is generated using default.
+EQsystem is successfully initialized.
+The poisson problem has been initialized.
+The quantum problem has been initialized.
+0.03040808778853701 0.00308775606198512
+-6.038247058066388e-11 3.0397569876659635e-11
+The iteration has been conducted for  [0, 0, 0] times.
+{'ni_error': [1, 5.826426212759544e-05, 0.000843875760074114], 'Qprime_len': [45451, 45451], 'ildos_error': [1, -0.00037375081571000904]}
+Traceback (most recent call last):
+  File "/scratch/zhaoyuha/EQuantum/testrun.py", line 25, in <module>
+    fsc.solve(syst,save=True)
+  File "/scratch/zhaoyuha/EQuantum/fsc.py", line 157, in solve
+    self.save_Uini(Unis,nis)
+NameError: name 'Unis' is not defined
+Generated 166307 points in 3D.
+Voronoi cells have been created.
+1 sites have been removed from the system.
+Quantum system is generated using default.
+EQsystem is successfully initialized.
+Traceback (most recent call last):
+  File "/scratch/zhaoyuha/EQuantum/testrun.py", line 24, in <module>
+    fsc=FSC(syst,ifinitial=True,params={'Ufunc': lambda x:0,'phi':0.6},convergence_tol=1e-6)
+  File "/scratch/zhaoyuha/EQuantum/fsc.py", line 57, in __init__
+    self.initial_Poisson()
+  File "/scratch/zhaoyuha/EQuantum/fsc.py", line 69, in initial_Poisson
+    self.update_Poisson()
+  File "/scratch/zhaoyuha/EQuantum/fsc.py", line 73, in update_Poisson
+    psolver.calculate_delta(self)
+  File "/scratch/zhaoyuha/EQuantum/poissonsolver.py", line 35, in calculate_delta
+    lat_spacing=fsc.geometry_params=system.geometry_params['sampling_density_function'][0.0]
+NameError: name 'system' is not defined
+Generated 166307 points in 3D.
+Voronoi cells have been created.
+1 sites have been removed from the system.
+The total number of sites of the current system doesn't match with the provided config file.
+Quantum system is generated using default.
+EQsystem is successfully initialized.
+Traceback (most recent call last):
+  File "/scratch/zhaoyuha/EQuantum/testrun.py", line 24, in <module>
+    fsc=FSC(syst,ifinitial=True,params={'Ufunc': lambda x:0,'phi':0.6},convergence_tol=1e-6)
+  File "/scratch/zhaoyuha/EQuantum/fsc.py", line 57, in __init__
+    self.initial_Poisson()
+  File "/scratch/zhaoyuha/EQuantum/fsc.py", line 69, in initial_Poisson
+    self.update_Poisson()
+  File "/scratch/zhaoyuha/EQuantum/fsc.py", line 73, in update_Poisson
+    psolver.calculate_delta(self)
+  File "/scratch/zhaoyuha/EQuantum/poissonsolver.py", line 35, in calculate_delta
+    lat_spacing=fsc.geometry_params=system.geometry_params['sampling_density_function'][0.0]
+NameError: name 'system' is not defined
+Generated 143859 points in 3D.
+Voronoi cells have been created.
+2 sites have been removed from the system.
+Quantum system is generated using default.
+EQsystem is successfully initialized.
+The poisson problem has been initialized.
+The quantum problem has been initialized.
+0.326588886993976 -0.00017462863262669343
+7.166478316830701e-10 -2.3936585199419655e-12
+The iteration has been conducted for  [0, 0, 0] times.
+{'ni_error': [1, 1.177388828050174e-17, -4.15046029041399e-05], 'Qprime_len': [34191, 34191], 'ildos_error': [1, 0.0012894233378976578]}
+Traceback (most recent call last):
+  File "/scratch/zhaoyuha/EQuantum/testrun.py", line 25, in <module>
+    fsc.solve(syst,save=True)
+  File "/scratch/zhaoyuha/EQuantum/fsc.py", line 157, in solve
+    self.save_Uini(Uis,nis)
+  File "/scratch/zhaoyuha/EQuantum/fsc.py", line 189, in save_Uini
+    mdic['Uis']=self.Uis
+AttributeError: 'FSC' object has no attribute 'Uis'
+Generated 143859 points in 3D.
+Voronoi cells have been created.
+2 sites have been removed from the system.
+Quantum system is generated using default.
+EQsystem is successfully initialized.
+The poisson problem has been initialized.
+The quantum problem has been initialized.
+0.32662653854563584 -0.00017464368805878715
+5.03237334543215e-10 -1.037818655385837e-12
+The iteration has been conducted for  [0, 0, 0] times.
+{'ni_error': [1, 1.177388828050174e-17, -4.150818085947886e-05], 'Qprime_len': [34191, 34191], 'ildos_error': [1, 0.0013048937409441065]}
+-0.3213288374973211 0.0001717856585343149
+The iteration has been conducted for  [0, 1, 0] times.
+{'ni_error': [1, 1.177388828050174e-17, -4.150818085947886e-05, 4.6300162684653814e-05], 'Qprime_len': [34191, 34191, 34191], 'ildos_error': [1, 0.0013048937409441065]}
+-2.65610790966877e-05 5.911536017147221e-08
+The iteration has been conducted for  [0, 2, 0] times.
+{'ni_error': [1, 1.177388828050174e-17, -4.150818085947886e-05, 4.6300162684653814e-05, 1.4050155916102838e-08], 'Qprime_len': [34191, 34191, 34191, 34191], 'ildos_error': [1, 0.0013048937409441065]}
+-7.65414311303027e-09 2.4510783396615068e-11

@@ -1,9 +1,16 @@
 # self_consistent_solver.py
 import poissonsolver as psolver
-import qsystem as qsolver
+import qbuilder as qbuilder
 import numpy as np
+import solvers as solvers
+
+import scipy.io as sio
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D  # needed for 3D plotting
+import matplotlib.cm as cm
+import matplotlib.colors as mcolors
 class FSC:
-    def __init__(self, system, quantum_solver, poisson_solver, convergence_tol=1e-6, max_iter=50):
+    def __init__(self, system, ifinitial=True,params=None,convergence_tol=1e-3, max_iter=50):
         """
         Initialize the self-consistent solver.
 
@@ -16,11 +23,15 @@ class FSC:
         """
         #quantities
         #initialized from System
-        self.sites = system.sites.copy()
+        self.geometry_params=system.geometry_params
+        self.quantum_builder=system.quantum_builder
+        self.sites = (system.sites).copy()
+        self.num_sites=system.num_sites
+        self.material_indices=system.material_indices
         self.ni=np.array([site.charge for i, site in self.sites.items()])
         self.Ui=np.array([site.potential for i, site in self.sites.items()])
-        self.N_indices = system.N_indices.copy()
-        self.D_indices = system.D_indices.copy()
+        self.N_indices = (system.N_indices).copy()
+        self.D_indices = (system.D_indices).copy()
         #initialize with Poisson solver parameters
         self.Ci=None
         self.A_mixed=None
@@ -32,30 +43,22 @@ class FSC:
         self.ildos=None
         self.Qsites=system.Qsites
         self.Qprime=system.Qsites.copy()
-        self.qsystem=system.qsystem.copy()
+        self.qsystem=system.qsystem
         self.Qsites_map={}
         
-        #initialize Posisson problem
-
-        #initialize Quantum problem
-
-        self.quantum_solver = quantum_solver
-        self.poisson_solver = poisson_solver
         self.convergence_tol = convergence_tol
         self.max_iter = max_iter
+        self.log={'ni_error':[1],
+        'Qprime_len':[],
+        'ildos_error':[1]}
 
-        # Import the relaxation functions from separate files.
-        # These functions must be defined in their respective modules.
-        # For example:
-        from stepI import relax_step_I
-        from stepII import relax_step_II
-        from stepIII import relax_step_III
-        self.relax_step_I = relax_step_I
-        self.relax_step_II = relax_step_II
-        self.relax_step_III = relax_step_III
-        # To store metrics for convergence (e.g., previous potential or density)
-        self.prev_potential = None
-        self.prev_density = None
+        if ifinitial:
+            #initialize Posisson problem
+            self.initial_Poisson()
+            if params is not None:
+                self.update_qparams(system,params,ifinitial=False)
+            #initialize Quantum problem
+            self.initial_Quantum(system)
     
     def initial_Poisson(self):
         """
@@ -63,32 +66,67 @@ class FSC:
          
         """
         #initialized Delta_matrix and A_mixed
+        self.update_Poisson()
+        print("The poisson problem has been initialized.")
+
+    def update_Poisson(self):
         psolver.calculate_delta(self)
         #solve the initial ND poisson problem and update ni, Ui
+        pre_ni=self.ni.copy()
         UnnD=psolver.solve_NDpoisson(self)
-        self.ni[self.D_indices]=UnnD[self.N_indices:]
-        self.Ui[self.N_indices]=UnnD[:self.N_indices]
+        self.ni[self.D_indices]=UnnD[-len(self.D_indices):]
+        self.log['ni_error'].append(np.mean(pre_ni-self.ni))
+        self.Ui[self.N_indices]=UnnD[:len(self.N_indices)]
         #initialized Ci
         self.Ci=psolver.solve_capacitance(self)
-        print("The poisson problem has been initialized.")
+        
 
     def initial_Quantum(self,system,**kwarg):
         """
         initialize the Quantum problem without the external electristatic field, yield initial ILDOS
 
         """
-        if system.quantum_builder=="kwant":
-            #initialize the site map between Qsysetm and kwant system
-            qsolver.kwant_site_map_from_Qsites(self,system)
-            #initialize the potential function Ufunc
-            qsolver.kwant_update_Ufunc(self,system)
-            #calculate and update onsite charge density through ED
-            self.ni+=qsolver.kwant_density_ED(self)
-            #calculate the initial ildos
-            self.ildos=qsolver.kwant_ildos_kpm(self,**kwarg)
+        #initialize the site map between Qsysetm and kwant system
+        qbuilder.site_map(self,system)
+        #initialize the potential function Ufunc
+        qbuilder.update_U(self,system)
+        #initialize at the half-filling (since assume U=0 onsite)
+        #self.ni[self.Qsites]+=0.5*np.ones(len(self.Qsites))
+        #calculate the initial ildos
+        self.ildos=qbuilder.update_ildos(self,system,**kwarg)
+        print("The quantum problem has been initialized.")
+    def update_qparams(self,system,params,ifinitial=True):
+        qbuilder.update_params(self,params)
+        if ifinitial:
+            self.initial_Quantum(system)
 
 
-    def iterate(self):
+    def update_Quantum(self,system,**kwarg):
+        pre_ildos=self.ildos.copy()
+        qbuilder.update_U(self,system)
+        self.ildos=qbuilder.update_ildos(self,system,**kwarg)
+        self.log['ildos_error'].append(np.mean(self.ildos-pre_ildos))
+        self.ni[self.Qsites]=qbuilder.get_n_from_ildos(self,self.ildos)
+
+
+
+    def local_solver(self):
+        dUdn=solvers.local_solver(self)
+        print(np.mean(dUdn[0]),np.mean(dUdn[1]))
+        self.Ui[self.Qprime]+=dUdn[0]
+        self.ni[self.Qprime]+=dUdn[1]
+
+        
+
+    def update_Qprime(self,tol=1e-7):
+        Qprime_new=solvers.update_Qprime(self,tol)
+        self.log['Qprime_len'].append(len(Qprime_new))
+        #print(self.log['Qprime_len'])
+        #print(len(Qprime_new))
+        self.Qprime=Qprime_new
+
+
+    def solve(self,system,save=False):
         """
         Run the self-consistent iteration loop until convergence or until max_iter is reached.
         The loop structure follows Fig.8 of the paper:
@@ -96,58 +134,128 @@ class FSC:
           - Step II: Relax the Poisson (PAA) update (update potential)
           - Step III: Relax the quantum (QAA) update (update ILDOS/density)
         """
-        for iter_num in range(self.max_iter):
-            print(f"Iteration {iter_num}")
+        #initialize the problem by conducting iteration twice:
+        initial_loop=0
+        while initial_loop<2:
+            self.local_solver()
+            self.update_Qprime()
+            psolver.calculate_delta(self)
+            self.Ci=psolver.solve_capacitance(self)
+            initial_loop+=1
+        iter_num=[0,0,0]
+        self.update_Poisson()
+        self.update_Quantum(system)
+        if save:
+            Uis=[]
+            nis=[]
+        while True:
+            print("The iteration has been conducted for ", iter_num,"times.")
+            print(self.log)
+            if save:
+                Uis.append(self.Ui)
+                nis.append(self.ni)
+                self.save_Uini(Uis,nis)
+            
+            self.local_solver()
+            self.update_Qprime()
+            if self.log['Qprime_len'][-1]-self.log['Qprime_len'][-2]!=0:
+                psolver.calculate_delta(self)
+                self.Ci=psolver.solve_capacitance(self)
+                iter_num[0]+=1
+                continue
+            else:
+                pass
+            
+            if np.abs(self.log['ni_error'][-1])>self.convergence_tol:
+                self.update_Poisson()
+                iter_num[1]+=1
+                continue
+            else:
+                pass 
+            self.update_Poisson()   
 
-            # Step I: Relaxation of the Q/Q' partition.
-            # This function should update the system to remove depleted sites from Q'.
-            self.relax_step_I(self.system)
+            break
+            # if np.abs(self.log['ildos_error'][-1])>self.convergence_tol:
+            #     self.update_Quantum(system)
+            #     iter_num[2]+=1
+            #     continue
+            # else:
+            #     print("The FSC has been solved.")
+            #     break
+            
 
-            # Step II: Relax the Poisson approximation.
-            # This function is responsible for updating the potential via the Poisson solver.
-            self.relax_step_II(self.poisson_solver, self.system)
+    def save_Uini(self,Uis,nis):
+        mdic={}
+        mdic['Uis']=Uis
+        mdic['nis']=nis
+        from scipy.io import savemat
+        mat_fname="testrun"
+        savemat(mat_fname,mdic)
 
-            # Step III: Relax the quantum approximation.
-            # This function updates the quantum solution (e.g., recalculating the ILDOS) in the system.
-            self.relax_step_III(self.quantum_solver, self.system)
 
-            # Check for convergence.
-            if self.check_convergence():
-                print(f"Convergence reached at iteration {iter_num}")
-                break
-        else:
-            print("Warning: Maximum iterations reached without full convergence.")
-
-    def check_convergence(self):
+    def plot_full(self, prop_values,**kwarg):
         """
-        Check convergence based on changes in the potential and/or density.
-        Here we use a simple example that compares the norm of the potential change.
-        You can modify this to suit the quantitative criteria from your paper.
-
-        Returns:
-          - True if the change is below the tolerance, False otherwise.
+        Plot the discretized sites in 3D space.
+        
+        If 'prop' is None, sites are colored according to their material (discrete colors).
+        Otherwise, 'prop' is expected to be a property name (e.g., "charge") and sites
+        will be colored using a continuous colormap based on that property's value.
         """
-        # Extract current potential from the system (e.g., from the sites)
-        current_potential = [site.potential for site in self.system.sites.values()]
-        current_density = [site.density for site in self.system.sites.values()]
+        fig = plt.figure(figsize=(10, 8))
+        ax = fig.add_subplot(111, projection='3d')
 
-        # If this is the first iteration, store and return False.
-        if self.prev_potential is None or self.prev_density is None:
-            self.prev_potential = current_potential
-            self.prev_density = current_density
-            return False
+        # Color sites based on a continuous property, e.g., "charge".
+        coords = [site.coordinates for site in self.sites.values()]
 
-        # Compute norms of the differences.
-        pot_diff = sum(abs(cp - pp) for cp, pp in zip(current_potential, self.prev_potential))
-        dens_diff = sum(abs(cd - pd) for cd, pd in zip(current_density, self.prev_density))
+        
+        coords = np.array(coords)
+        prop_values = np.array(prop_values)
+        
+        # Create a normalization and a ScalarMappable for the colormap.
+        #norm = mcolors.Normalize(vmin=np.min(prop_values), vmax=np.max(prop_values))
+        cmap = cm.viridis
+        sc = ax.scatter(coords[:, 0], coords[:, 1], coords[:, 2],
+                        c=prop_values, cmap=cmap, s=20,vmin=np.min(prop_values), vmax=np.max(prop_values),**kwarg)
+        # Add a colorbar to indicate the property values.
+        cbar = fig.colorbar(sc, ax=ax, pad=0.1)
+        #cbar.set_label(prop_values)
+        box_size=self.geometry_params['box_size']
+        ax.set_box_aspect((box_size[0][1]-box_size[0][0], box_size[1][1]-box_size[1][0], box_size[2][1]-box_size[2][0]))
+        ax.set_xlabel("X")
+        ax.set_ylabel("Y")
+        ax.set_zlabel("Z")
+        ax.set_title("System Sites")
+        ax.legend()
+        plt.show()
 
-        # Update previous values.
-        self.prev_potential = current_potential
-        self.prev_density = current_density
 
-        # Check if both differences are below the tolerance.
-        if pot_diff < self.convergence_tol and dens_diff < self.convergence_tol:
-            return True
-        return False
-    
+    def plot_qsystem(self,prop_values,**kwarg):
+        """
+        Plot the discretized sites in 2d quantum system
+        
+        If 'prop' is None, sites are colored according to their material (discrete colors).
+        Otherwise, 'prop' is expected to be a property name (e.g., "charge") and sites
+        will be colored using a continuous colormap based on that property's value.
+        """
+        fig, ax=plt.subplots(figsize=(10,8))
 
+        # Color sites based on a continuous property, e.g., "charge".
+        coords = np.array([site.coordinates for site in self.sites.values()])[self.Qsites]
+        prop_values = np.array(prop_values)
+        
+        # Create a normalization and a ScalarMappable for the colormap.
+        #norm = mcolors.Normalize(vmin=np.min(prop_values), vmax=np.max(prop_values))
+        cmap = cm.viridis
+        sc = ax.scatter(coords[:, 0], coords[:, 1],
+                        c=prop_values, cmap=cmap, s=20,**kwarg)
+        # Add a colorbar to indicate the property values.
+        cbar = fig.colorbar(sc, ax=ax, pad=0.1)
+        #cbar.set_label(prop_values)
+        #box_size=self.geometry_params['box_size']
+        #ax.set_box_aspect((box_size[0][1]-box_size[0][0], box_size[1][1]-box_size[1][0], box_size[2][1]-box_size[2][0]))
+        ax.axis('equal')
+        ax.set_xlabel("X")
+        ax.set_ylabel("Y")
+        ax.set_title("System Sites")
+        ax.legend()
+        plt.show()

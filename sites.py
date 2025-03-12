@@ -1,7 +1,7 @@
 import numpy as np
 
 class Site:
-    def __init__(self, site_id, coordinates, charge=0.0, potential=0.0, dielectric_constant=1.0,boundary=False,BCtype="N"):
+    def __init__(self, site_id, coordinates, charge=0.0, potential=0.0, dielectric_constant=1.0,boundary=False,BCtype=1):
         """
         Initialize a Site in 3D.
         
@@ -49,5 +49,6 @@ class Site:
         return face_area * (self.potential - neighbor_potential) / distance
 
     def __repr__(self):
-        return (f"Site(id={self.id}, coord={self.coordinates.tolist()}, "
-                f"potential={self.potential}, charge={self.charge})")
+        return (f"Site(id={self.id}, coord={self.coordinates}, "
+                f"potential={self.potential}, charge={self.charge}, "
+                f"material={self.material}, BCtype={self.BCtype}.)")
