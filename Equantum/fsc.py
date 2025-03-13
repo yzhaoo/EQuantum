@@ -34,10 +34,12 @@ class FSC:
         self.N_indices = (system.N_indices).copy()
         self.D_indices = (system.D_indices).copy()
         self.t=system.t
+        self.lattice_type=self.geometry_params['lattice_type']
         self.lat_spacing=system.lat_spacing
         self.unit_cell_area=system.unit_cell_area
         self.unit_cell_area_real=system.unit_cell_area_real
         self.max_fill=system.max_fill
+        self.bandwidth= 3.9 *self.t if self.lattice_type=="square" else 2.9*self.t
         #initialize with Poisson solver parameters
         self.Ci=None
         self.A_mixed=None
@@ -102,7 +104,7 @@ class FSC:
         #initialize at the half-filling (since assume U=0 onsite)
         #self.ni[self.Qsites]+=0.5*np.ones(len(self.Qsites))
         #calculate the initial ildos
-        self.ildos=qbuilder.update_ildos(self,system,delta=self.t/20,w=np.linspace(-3.9*self.t,3.9*self.t,2000),
+        self.ildos=qbuilder.update_ildos(self,system,delta=self.t/20,w=np.linspace(-self.bandwidth,self.bandwidth,2000),
 npol_scale=6,**kwarg)
         print("The quantum problem has been initialized.")
 
@@ -116,7 +118,7 @@ npol_scale=6,**kwarg)
     def update_Quantum(self,system,**kwarg):
         pre_ildos=self.ildos.copy()
         qbuilder.update_U(self,system)
-        self.ildos=qbuilder.update_ildos(self,system,delta=self.t/100,w=np.linspace(-5*self.t,5*self.t,200),**kwarg)
+        self.ildos=qbuilder.update_ildos(self,system,delta=self.t/100,w=np.linspace(-self.bandwidth,self.bandwidth,200),**kwarg)
         self.log['ildos_error'].append(np.mean(self.ildos-pre_ildos))
         self.ni[self.Qsites]=qbuilder.get_n_from_ildos(self,self.ildos)
 

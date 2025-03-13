@@ -2,7 +2,7 @@ import numpy as np
 from scipy.interpolate import interp1d
 from scipy.optimize import minimize_scalar
 
-def local_solver_i(idx,ildos,Ci,ni,Ui,t):
+def local_solver_i(idx,ildos,Ci,ni,Ui,limits):
     #interpolate the ildos to be a conitnuous function
     x_dis=ildos[0]-Ui
     y_dis=ildos[1]
@@ -12,7 +12,6 @@ def local_solver_i(idx,ildos,Ci,ni,Ui,t):
         return -dU*Ci+ni
     def diff(dU):
         return np.abs(dn_for_Ci(dU)-ildos_iterp(dU))
-    limits=((t*-3.9-Ui),(t*3.9-Ui))
     try:
         result = minimize_scalar(diff, bounds=limits, method='bounded')
     except ValueError:
@@ -28,7 +27,9 @@ def local_solver(fsc):
     dUs=np.zeros(len(fsc.Qprime))
     dns=np.zeros(len(fsc.Qprime))
     for ii in range(len(fsc.Qprime)):
-        dU,dn=local_solver_i(ii,fsc.ildos[ii],fsc.Ci[ii],fsc.ni[fsc.Qprime][ii],fsc.Ui[fsc.Qprime][ii],fsc.t)
+        Uii=fsc.Ui[fsc.Qprime][ii]
+        elimit=(0-Uii,fsc.bandwidth-Uii)
+        dU,dn=local_solver_i(ii,fsc.ildos[ii],fsc.Ci[ii],fsc.ni[fsc.Qprime][ii],Uii,elimit)
         dUs[ii]=dU
         dns[ii]=dn
     return [dUs,dns]

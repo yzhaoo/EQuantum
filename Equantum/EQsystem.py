@@ -188,17 +188,38 @@ class System:
 
         if prop is None:
             # Group sites by material.
-            color_map = {'dielectric':(135/255,213/255,216/255,0.1),
-                         'dopants':(225/255,151/255,206/255,0.6),
-                         'gate':(255/255,216/255,14/255,1),
-                         'Qsystem':(44/255,94/255,84/255,0.8),
-                         'vacuum':(1,1,1,0)}
-            
+            color_map = {
+            'dielectric': (135/255, 213/255, 216/255, 0.1),
+            'dopants':    (200/255, 151/255, 206/255, 0.6),
+            'gate':       (200/255, 216/255, 14/255, 0.9),
+            'Qsystem':    (44/255, 94/255, 84/255, 0.8),
+            'vacuum':     (1, 1, 1, 0)}
+
+        # Loop over each material key stored in self.material_indices.
             for mat in list(self.material_indices.keys()):
+                # First, try an exact match:
+                if mat in color_map:
+                    my_color = color_map[mat]
+                else:
+                    # Convert the material name to lower case for case-insensitive matching.
+                    lower_mat = mat.lower()
+                    if 'dielectric' in lower_mat:
+                        my_color = tuple(np.array(color_map['dielectric'])+0.03*np.random.rand(4))
+                    elif 'dopants' in lower_mat:
+                        my_color = tuple(np.array(color_map['dopants'])+0.03*np.random.rand(4))
+                    elif 'gate' in lower_mat:
+                        my_color = tuple(np.array(color_map['gate'])+0.03*np.random.rand(4))
+                    else:
+                        # Default color if none of the keywords match
+                        my_color = (0, 0, 0, 1)
+                
                 coords = np.array([self.sites[idx].coordinates for idx in self.material_indices[mat]])
-                if len(coords)>0:
-                    ax.scatter(coords[:, 0], coords[:, 1], coords[:, 2],
-                            color=color_map[mat], label=mat, s=10)
+                if len(coords) > 0:
+                    try:
+                        ax.scatter(coords[:, 0], coords[:, 1], coords[:, 2],
+                                color=my_color, label=mat, s=10)
+                    except ValueError:
+                        print(my_color)
         else:
             # Color sites based on a continuous property, e.g., "charge".
             prop_values = []
@@ -219,8 +240,9 @@ class System:
             # Create a normalization and a ScalarMappable for the colormap.
             norm = mcolors.Normalize(vmin=np.min(prop_values), vmax=np.max(prop_values))
             cmap = cm.viridis
+            alphamap=np.abs(prop_values/(1.5*(np.max(prop_values)-np.min(prop_values))))
             sc = ax.scatter(coords[:, 0], coords[:, 1], coords[:, 2],
-                            c=prop_values, cmap=cmap, s=20)
+                            c=prop_values, cmap=cmap, s=10)
             # Add a colorbar to indicate the property values.
             cbar = fig.colorbar(sc, ax=ax, pad=0.1)
             cbar.set_label(prop)
