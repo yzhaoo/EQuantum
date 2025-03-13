@@ -10,7 +10,7 @@ from mpl_toolkits.mplot3d import Axes3D  # needed for 3D plotting
 import matplotlib.cm as cm
 import matplotlib.colors as mcolors
 class FSC:
-    def __init__(self, system, ifinitial=True,params=None,convergence_tol=1e-3, max_iter=50):
+    def __init__(self, system, ifinitial=True,params=None,convergence_tol=1e-10, max_iter=50):
         """
         Initialize the self-consistent solver.
 
@@ -32,6 +32,11 @@ class FSC:
         self.Ui=np.array([site.potential for i, site in self.sites.items()])
         self.N_indices = (system.N_indices).copy()
         self.D_indices = (system.D_indices).copy()
+        self.t=system.t
+        self.lat_spacing=system.lat_spacing
+        self.unit_cell_area=system.unit_cell_area
+        self.unit_cell_area_real=system.unit_cell_area_real
+        self.max_fill=system.max_fill
         #initialize with Poisson solver parameters
         self.Ci=None
         self.A_mixed=None
@@ -55,10 +60,10 @@ class FSC:
         if ifinitial:
             #initialize Posisson problem
             self.initial_Poisson()
-            if params is not None:
-                self.update_qparams(system,params,ifinitial=False)
-            #initialize Quantum problem
-            self.initial_Quantum(system)
+        if params is not None:
+            self.update_qparams(system,params,ifinitial=False)
+        #initialize Quantum problem
+        self.initial_Quantum(system)
     
     def initial_Poisson(self):
         """
@@ -93,7 +98,8 @@ class FSC:
         #initialize at the half-filling (since assume U=0 onsite)
         #self.ni[self.Qsites]+=0.5*np.ones(len(self.Qsites))
         #calculate the initial ildos
-        self.ildos=qbuilder.update_ildos(self,system,**kwarg)
+        self.ildos=qbuilder.update_ildos(self,system,delta=self.t/20,w=np.linspace(-3.9*self.t,3.9*self.t,2000),
+npol_scale=6,**kwarg)
         print("The quantum problem has been initialized.")
     def update_qparams(self,system,params,ifinitial=True):
         qbuilder.update_params(self,params)
@@ -104,7 +110,7 @@ class FSC:
     def update_Quantum(self,system,**kwarg):
         pre_ildos=self.ildos.copy()
         qbuilder.update_U(self,system)
-        self.ildos=qbuilder.update_ildos(self,system,**kwarg)
+        self.ildos=qbuilder.update_ildos(self,system,delta=self.t/100,w=np.linspace(-5*self.t,5*self.t,200),**kwarg)
         self.log['ildos_error'].append(np.mean(self.ildos-pre_ildos))
         self.ni[self.Qsites]=qbuilder.get_n_from_ildos(self,self.ildos)
 
@@ -116,7 +122,14 @@ class FSC:
         self.Ui[self.Qprime]+=dUdn[0]
         self.ni[self.Qprime]+=dUdn[1]
 
-        
+    def update_BC(self,syst,name,prop,value,ifinitial=False):
+        for site in list(self.sites.values()):
+            if site.material==name:
+                setattr(site, prop, value)
+        if ifinitial:
+            self.initial_Poisson()
+            #initialize Quantum problem
+
 
     def update_Qprime(self,tol=1e-7):
         Qprime_new=solvers.update_Qprime(self,tol)
@@ -126,7 +139,7 @@ class FSC:
         self.Qprime=Qprime_new
 
 
-    def solve(self,system,save=False):
+    def solve(self,system,save=None):
         """
         Run the self-consistent iteration loop until convergence or until max_iter is reached.
         The loop structure follows Fig.8 of the paper:
@@ -136,6 +149,7 @@ class FSC:
         """
         #initialize the problem by conducting iteration twice:
         initial_loop=0
+        self.update_Qprime()
         while initial_loop<2:
             self.local_solver()
             self.update_Qprime()
@@ -144,17 +158,17 @@ class FSC:
             initial_loop+=1
         iter_num=[0,0,0]
         self.update_Poisson()
-        self.update_Quantum(system)
-        if save:
+        #self.update_Quantum(system)
+        if save is not None:
             Uis=[]
             nis=[]
         while True:
             print("The iteration has been conducted for ", iter_num,"times.")
             print(self.log)
-            if save:
+            if save is not None:
                 Uis.append(self.Ui)
                 nis.append(self.ni)
-                self.save_Uini(Uis,nis)
+                self.save_Uini(Uis,nis,filename=save)
             
             self.local_solver()
             self.update_Qprime()
@@ -184,12 +198,12 @@ class FSC:
             #     break
             
 
-    def save_Uini(self,Uis,nis):
+    def save_Uini(self,Uis,nis,filename):
         mdic={}
         mdic['Uis']=Uis
         mdic['nis']=nis
         from scipy.io import savemat
-        mat_fname="testrun"
+        mat_fname=filename
         savemat(mat_fname,mdic)
 
 

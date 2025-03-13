@@ -37,7 +37,7 @@ class QuantumSystem:
         
         for i, site in enumerate(self.Qsites):
             # Diagonal term: call the onsite function with the site.
-            self.H[i, i] = cnp+onsite_pot(site, Ufunc) 
+            self.H[i, i] = 0*cnp+onsite_pot(site, Ufunc) 
             # Off-diagonal: iterate over neighbors
             for j in site.neighbors:
                 if np.abs(self.all_sites[j].coordinates[2])<1e-8 and self.all_sites[j].material=='Qsystem':
@@ -79,6 +79,7 @@ class QuantumSystem:
         for j in range(ntries):
             e,d = get_dos_i(m,i=i,**kwargs)
             d0 = d0 + d
+        d0=d0/np.sum(d0)
         return e,d0/ntries
     def get_ldos(self,params=None,TFapprox=True,ifpara=False,Ncore=5,**kwargs):
         if TFapprox:

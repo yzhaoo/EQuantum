@@ -32,9 +32,10 @@ from scipy.sparse.linalg import spsolve
     
 
 def calculate_delta(fsc):
-    lat_spacing=fsc.geometry_params['sampling_density_function'](0.0)
+    unit_cell_area=fsc.unit_cell_area
+
     #change density unit to #/site
-    Cunit=55.2634936
+    Cunit=55.2634936/unit_cell_area/1e16 #1V voltage difference through 1mum**2 area seprated by distance 1mum will indice Cunit number of charge 10^12 cm^-2
 
 
     total = fsc.num_sites

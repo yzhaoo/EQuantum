@@ -46,7 +46,9 @@ def update_ildos(fsc,syst,**kwarg):
     if builder=="kwant":
         return ksolver.kwant_ildos_kpm(fsc,**kwarg)
     elif builder=="default":
-        return fsc.qsystem.get_ldos(delta=1e-2,**kwarg)
+        dataall= fsc.qsystem.get_ldos(**kwarg)
+        dataall[:,1,:]*=fsc.max_fill
+        return dataall
     else:
         print("cannot find the quantum builder.")
 

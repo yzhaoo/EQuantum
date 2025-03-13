@@ -1,5 +1,6 @@
 import json
 import numpy as np
+import scipy.constants as sc
 #import mathutils
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D  # needed for 3D plotting
@@ -34,6 +35,7 @@ class System:
         """
         # Initialize Geometry3D
         self.geometry_params = geometry_params
+        self.lat_spacing=geometry_params['sampling_density_function'](0.0)
         self.geometry = None
         self.build_geometry()
         # Discretize the simulation box
@@ -57,7 +59,27 @@ class System:
             self.update_sites_from_blender(filename=config_file)
 
         #initialize quantum system
-        self.t=t
+        #scale the hopping amplitude according to the discretization level
+        if self.geometry_params["lattice_type"]=="square":
+            #use m*=0.065m0
+            #unit as eV
+            self.t=sc.hbar**2/(2*(self.lat_spacing*1e-6)**2 *0.067*sc.m_e)/sc.elementary_charge
+            self.lat_spacing_real=0.565 #nm
+            self.unit_cell_area=(self.lat_spacing*1e-6)**2
+            self.unit_cell_area_real=(self.lat_spacing_real*1e-9)**2
+            self.max_fill=1/self.unit_cell_area_real/1e16 #maximal spinless carrier density, unit: # 10^12/cm^-2          
+        elif self.geometry_params["lattice_type"]=="honeycomb":
+            # use v_F=1e6 m/s from graphene
+            self.t=2*sc.hbar*1e6/(3*(self.lat_spacing*1e-6))/sc.elementary_charge
+            self.lat_spacing_real=0.142 #nm
+            self.unit_cell_area=(3*np.sqrt(3)*(self.lat_spacing*1e-6)**2 /2)
+            self.unit_cell_area_real=(3*np.sqrt(3)*(self.lat_spacing_real*1e-9)**2 /2)
+            self.max_fill=2/self.unit_cell_area_real/1e16 #maximal spinless carrier density, unit: # 10^12 /cm^-2
+            
+        else:
+            self.t=t
+            self.max_fill=1 #unitless calculation
+            self.unit_cell_area=1
         self.qsystem=None
         self.qsite_map=None
         self.quantum_builder=quantum_builder
