@@ -31,13 +31,13 @@ class QuantumSystem:
     def build_hamiltonian(self):
         Ufunc = self.params['Ufunc']  # This is a function we haven't called yet.
         phi = self.params['phi']
-        cnp= 4*self.t if self.lattice_type=="square" else 3*self.t
+        
         
         self.H = lil_matrix((self.N, self.N), dtype=np.complex128)
         
         for i, site in enumerate(self.Qsites):
             # Diagonal term: call the onsite function with the site.
-            self.H[i, i] = 0*cnp+onsite_pot(site, Ufunc) 
+            self.H[i, i] = onsite_pot(site, Ufunc) 
             # Off-diagonal: iterate over neighbors
             for j in site.neighbors:
                 if np.abs(self.all_sites[j].coordinates[2])<1e-8 and self.all_sites[j].material=='Qsystem':

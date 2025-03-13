@@ -46,8 +46,13 @@ def update_ildos(fsc,syst,**kwarg):
     if builder=="kwant":
         return ksolver.kwant_ildos_kpm(fsc,**kwarg)
     elif builder=="default":
+        
+        cnp= 3.9*fsc.t if fsc.lattice_type=="square" else 0*fsc.t
         dataall= fsc.qsystem.get_ldos(**kwarg)
+        #rescale the filling according to the maximal carrier density
         dataall[:,1,:]*=fsc.max_fill
+        #for square lattice, shift the energy, the spectrum start from 0
+        dataall[:,0,:]+=cnp
         return dataall
     else:
         print("cannot find the quantum builder.")

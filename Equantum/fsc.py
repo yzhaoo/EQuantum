@@ -3,6 +3,7 @@ import poissonsolver as psolver
 import qbuilder as qbuilder
 import numpy as np
 import solvers as solvers
+import scipy.constants as sc
 
 import scipy.io as sio
 import matplotlib.pyplot as plt
@@ -64,6 +65,9 @@ class FSC:
             self.update_qparams(system,params,ifinitial=False)
         #initialize Quantum problem
         self.initial_Quantum(system)
+
+    def phi_to_B(self):
+        return self.qparams['phi']*sc.h/sc.e/self.unit_cell_area
     
     def initial_Poisson(self):
         """
@@ -101,6 +105,8 @@ class FSC:
         self.ildos=qbuilder.update_ildos(self,system,delta=self.t/20,w=np.linspace(-3.9*self.t,3.9*self.t,2000),
 npol_scale=6,**kwarg)
         print("The quantum problem has been initialized.")
+
+
     def update_qparams(self,system,params,ifinitial=True):
         qbuilder.update_params(self,params)
         if ifinitial:
@@ -139,7 +145,7 @@ npol_scale=6,**kwarg)
         self.Qprime=Qprime_new
 
 
-    def solve(self,system,save=None):
+    def solve(self,system,save=None,**kwarg):
         """
         Run the self-consistent iteration loop until convergence or until max_iter is reached.
         The loop structure follows Fig.8 of the paper:
@@ -190,7 +196,7 @@ npol_scale=6,**kwarg)
 
             break
             # if np.abs(self.log['ildos_error'][-1])>self.convergence_tol:
-            #     self.update_Quantum(system)
+            #     self.update_Quantum(system,**kwarg)
             #     iter_num[2]+=1
             #     continue
             # else:
