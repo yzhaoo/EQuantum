@@ -28,7 +28,10 @@ def local_solver(fsc):
     dns=np.zeros(len(fsc.Qprime))
     for ii in range(len(fsc.Qprime)):
         Uii=fsc.Ui[fsc.Qprime][ii]
-        elimit=(0-Uii,fsc.bandwidth-Uii)
+        if fsc.lattice_type=="square":
+            elimit=(0-Uii,fsc.bandwidth-Uii)
+        else:
+            elimit=(-Uii-fsc.bandwidth/2,fsc.bandwidth/2-Uii)
         dU,dn=local_solver_i(ii,fsc.ildos[ii],fsc.Ci[ii],fsc.ni[fsc.Qprime][ii],Uii,elimit)
         dUs[ii]=dU
         dns[ii]=dn

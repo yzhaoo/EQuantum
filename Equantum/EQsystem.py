@@ -70,7 +70,8 @@ class System:
             self.max_fill=1/self.unit_cell_area_real/1e16 #maximal spinless carrier density, unit: # 10^12/cm^-2          
         elif self.geometry_params["lattice_type"]=="honeycomb":
             # use v_F=1e6 m/s from graphene
-            self.t=2*sc.hbar*1e6/(3*(self.lat_spacing*1e-6))/sc.elementary_charge
+            #self.t=2*sc.hbar*1e6/(3*(self.lat_spacing*1e-6))/sc.elementary_charge
+            self.t=0.4388/(self.lat_spacing*1000)
             self.lat_spacing_real=0.142 #nm
             self.unit_cell_area=(3*np.sqrt(3)*(self.lat_spacing*1e-6)**2 /2)
             self.unit_cell_area_real=(3*np.sqrt(3)*(self.lat_spacing_real*1e-9)**2 /2)
@@ -107,21 +108,19 @@ class System:
         #print(no_neighbor)
         sites_idx=np.array(range(num_sites))
         new_site_dict={}
-        old_to_new_map={idx:nidx for nidx, idx in enumerate(np.delete(sites_idx,no_neighbor))}
+        if no_neighbor !=[]:
+            old_to_new_map={idx:nidx for nidx, idx in enumerate(np.delete(sites_idx,no_neighbor))}
         #update site index and id
-        for nidx, idx in enumerate(np.delete(sites_idx,no_neighbor)):
-            nsite=self.sites[idx]
-            nsite.id=nidx
-            n_neighbors={}
-            #update neighbor index
-            for nn in list(nsite.neighbors.keys()):
-                n_neighbors[old_to_new_map[nn]]=nsite.neighbors[nn]
-            nsite.neighbors=n_neighbors
-            new_site_dict[nidx]=nsite
-        self.sites=new_site_dict
-
-        
-        
+            for nidx, idx in enumerate(np.delete(sites_idx,no_neighbor)):
+                nsite=self.sites[idx]
+                nsite.id=nidx
+                n_neighbors={}
+                #update neighbor index
+                for nn in list(nsite.neighbors.keys()):
+                    n_neighbors[old_to_new_map[nn]]=nsite.neighbors[nn]
+                nsite.neighbors=n_neighbors
+                new_site_dict[nidx]=nsite
+            self.sites=new_site_dict
         print("%d sites have been removed from the system." %len(no_neighbor))
 
     def load_config(self, config_file):

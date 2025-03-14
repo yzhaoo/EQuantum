@@ -24,6 +24,7 @@ class QuantumSystem:
         self.params = params.copy()  # Store the parameter dictionary
         self.N = len(self.Qsites)
         self.lattice_type=syst.geometry_params['lattice_type']
+        self.lat_spacing=syst.lat_spacing
         self.t=syst.t
         self.H = None
         self.build_hamiltonian()
@@ -31,6 +32,9 @@ class QuantumSystem:
     def build_hamiltonian(self):
         Ufunc = self.params['Ufunc']  # This is a function we haven't called yet.
         phi = self.params['phi']
+        lat_spacing=self.lat_spacing
+
+        hop_func= mag_hop_square if self.lattice_type=="square" else mag_hop_honeycomb
         
         
         self.H = lil_matrix((self.N, self.N), dtype=np.complex128)
@@ -48,9 +52,10 @@ class QuantumSystem:
                     neighbor = self.Qsites[j_idx]
                     coord_j = np.array(neighbor.coordinates)
                     # Only add hopping if neighbor's z coordinate is near 0.
-                    hop_val = mag_hop(self.t,site, neighbor, phi)
+                    hop_val = hop_func(self.t,site, neighbor, phi,lat_spacing)
+                    #hop_val_back=hop_func(self.t, neighbor,site, phi,lat_spacing)
                     self.H[i, j_idx] = hop_val
-                    self.H[j_idx, i] = np.conjugate(hop_val)
+                    #self.H[j_idx, i] = hop_val_back
     
     def update_params(self, new_params):
         """
@@ -80,7 +85,7 @@ class QuantumSystem:
             e,d = get_dos_i(m,i=i,**kwargs)
             d0 = d0 + d
         d0=d0/np.sum(d0)
-        return e,d0/ntries
+        return e,d0 #/ntries
     def get_ldos(self,params=None,TFapprox=True,ifpara=False,Ncore=5,**kwargs):
         if TFapprox:
             bulk_dos= self.get_dos(**kwargs)
@@ -102,9 +107,24 @@ class QuantumSystem:
 
         
 
-def mag_hop(t,to_site,from_site,phi):
-        x=from_site.coordinates[0]
-        return t*np.exp(1j*2*np.pi*phi*x)
+def mag_hop_square(t,to_site,from_site,phi,lat_spacing):
+    coord_i=np.array(from_site.coordinates)/lat_spacing
+    coord_f=np.array(to_site.coordinates)/lat_spacing
+    dx=(coord_f[0]- coord_i[0])
+    ydirection=np.sign(coord_f[1]-coord_i[1])
+    nx=coord_i[0]
+    return t*np.exp(1j*2*np.pi*phi*nx*dx*ydirection)
+
+def mag_hop_honeycomb(t,to_site,from_site,phi,lat_spacing):
+    coord_i=np.array(from_site.coordinates)/lat_spacing
+    coord_f=np.array(to_site.coordinates)/lat_spacing
+    dy=(coord_f[1]- coord_i[1])
+    dy = 0 if np.abs(dy)>1e-6 else 1
+    xdirection=np.sign(coord_f[0]-coord_i[0])
+    ny=coord_i[1]
+    return t*np.exp(1j*2*np.pi*phi*ny*dy*(-1/2)*xdirection)
+
+
 
 def onsite_pot(site,Ufunc):
         return Ufunc(site)

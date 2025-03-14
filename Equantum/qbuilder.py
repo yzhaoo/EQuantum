@@ -47,9 +47,11 @@ def update_ildos(fsc,syst,**kwarg):
         return ksolver.kwant_ildos_kpm(fsc,**kwarg)
     elif builder=="default":
         cnp= fsc.bandwidth if fsc.lattice_type=="square" else 0*fsc.t
+        
         dataall= fsc.qsystem.get_ldos(**kwarg)
         #rescale the filling according to the maximal carrier density
         dataall[:,1,:]*=fsc.max_fill
+        #dataall[:,1,:]+=charge_cnp
         #for square lattice, shift the energy, the spectrum start from 0
         dataall[:,0,:]+=cnp
         return dataall
@@ -60,8 +62,9 @@ def get_n_from_ildos(fsc,edos_data,sample="energy"):
     ##edos_data should be the dos for ee<0 [site,energies,dos]
     nden=np.zeros(len(edos_data))
     if sample == "energy":
+        charge_cnp= 0 if fsc.lattice_type=="square" else -fsc.max_fill/2
         filled_idx=[np.where(edos_data[ii,0,:]<=0.)[0][-1] for ii in range(len(edos_data))]
         for ii in range(len(edos_data)):
             nden[ii]=np.sum(edos_data[ii,1,:filled_idx[ii]])
-        return nden
+        return nden+charge_cnp
         
