@@ -20,20 +20,20 @@ def density_function(r):
 
     # Define a 3D simulation box: ((xmin, xmax), (ymin, ymax), (zmin, zmax))
 
-geoparams={"lattice_type": "square",   # or honeycomb_lattice, etc.
+geoparams={"lattice_type": "honeycomb",   # or honeycomb_lattice, etc.
 "box_size": ((-0.5, 0.5), (-0.5, 0.5), (-0.08, 0.08)),
 "sampling_density_function": density_function,
 "quantum_center": (0,0,0)     # optional, defaults to (0,0,0)
               }
 
-config_file=setuppath+"0003_06.json"
+config_file=setuppath+"0003_06_hc.json"
 syst=System(geoparams,config_file=config_file,ifqsystem=True,quantum_builder="default")
 
-qparams={'Ufunc': lambda x:0,'phi':0.015}
+qparams={'Ufunc': lambda x:0,'phi':0.05}
 fsc=FSC(syst,ifinitial=False,params=qparams)
 
-fsc.update_BC(syst,'gate','potential',30)
-fsc.update_BC(syst,'backgate','potential',-50,ifinitial=True)
+fsc.update_BC(syst,'gate','potential',0.3)
+fsc.update_BC(syst,'backgate','potential',-0.3,ifinitial=True)
 
 
 fsc.solve(syst,save=datapath+"test0003_06")

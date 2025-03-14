@@ -40,6 +40,7 @@ class FSC:
         self.unit_cell_area_real=system.unit_cell_area_real
         self.max_fill=system.max_fill
         self.bandwidth= 3.9 *self.t if self.lattice_type=="square" else 2.9*self.t
+        
         #initialize with Poisson solver parameters
         self.Ci=None
         self.A_mixed=None
@@ -65,11 +66,21 @@ class FSC:
             self.initial_Poisson()
         if params is not None:
             self.update_qparams(system,params,ifinitial=False)
+            #update the maximal filling for graphene under magnetic field.
+            self.max_fill= system.max_fill if self.lattice_type=="square" else self.E_to_n(self.bandwidth,self.qparams['phi'],self.lat_spacing*1e-6)
+            #print(self.qparams['phi'],self.lat_spacing,self.bandwidth,self.max_fill,self.E_to_n(self.bandwidth,self.qparams['phi'],self.lat_spacing))
         #initialize Quantum problem
         self.initial_Quantum(system)
 
     def phi_to_B(self):
         return self.qparams['phi']*sc.h/sc.e/self.unit_cell_area
+
+    def E_to_n(self,ee,phi,a):
+        """
+        traslate the energy (in the unit of the hopping amplitude) to the carrier density (in the unit of 10^12 cm^-2) according to the LL energy of graphene
+        """
+        #the carrier density will scale with the chosen lattice spacing. Here the present carrier densiyt is the one after scaling.
+        return (4*ee**2/(3*np.pi)+4*phi/np.sqrt(3))/(3* a **2)/1e16
     
     def initial_Poisson(self):
         """
@@ -196,14 +207,14 @@ npol_scale=6,**kwarg)
                 pass 
             self.update_Poisson()   
 
-            break
-            # if np.abs(self.log['ildos_error'][-1])>self.convergence_tol:
-            #     self.update_Quantum(system,**kwarg)
-            #     iter_num[2]+=1
-            #     continue
-            # else:
-            #     print("The FSC has been solved.")
-            #     break
+
+            if np.abs(self.log['ildos_error'][-1])>self.convergence_tol:
+                self.update_Quantum(system,ifpara=True,Ncore=20,**kwarg)
+                iter_num[2]+=1
+                continue
+            else:
+                print("The FSC has been solved.")
+                break
             
 
     def save_Uini(self,Uis,nis,filename):
@@ -281,3 +292,5 @@ npol_scale=6,**kwarg)
         ax.set_title("System Sites")
         ax.legend()
         plt.show()
+
+    

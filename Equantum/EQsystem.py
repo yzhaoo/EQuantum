@@ -85,7 +85,7 @@ class System:
         self.qsite_map=None
         self.quantum_builder=quantum_builder
         if ifqsystem:
-            if self.Qsites ==None:
+            if self.Qsites ==[]:
                 print("No site has been assigned to the quantum system.")
             else:
                 self.build_qsystem(quantum_builder)
