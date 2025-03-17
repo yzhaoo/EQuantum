@@ -762,3 +762,23 @@ Traceback (most recent call last):
   File "/scratch/zhaoyuha/EQuantum/EQuantum/Equantum/EQsystem.py", line 283, in update_sites_from_blender
     with open(filename, "r") as f:
 FileNotFoundError: [Errno 2] No such file or directory: 'setup/dotgate/0003_06_fc.json'
+Generated 304084 points in 3D.
+Voronoi cells have been created.
+0 sites have been removed from the system.
+Quantum system is generated using default.
+EQsystem is successfully initialized.
+The quantum problem has been initialized.
+Traceback (most recent call last):
+  File "/scratch/zhaoyuha/EQuantum/EQuantum/topgate_test.py", line 36, in <module>
+    fsc.update_BC(syst,'backgate','potential',-0.3,ifinitial=True)
+  File "/scratch/zhaoyuha/EQuantum/EQuantum/Equantum/fsc.py", line 149, in update_BC
+    self.initial_Poisson()
+  File "/scratch/zhaoyuha/EQuantum/EQuantum/Equantum/fsc.py", line 91, in initial_Poisson
+    self.update_Poisson()
+  File "/scratch/zhaoyuha/EQuantum/EQuantum/Equantum/fsc.py", line 98, in update_Poisson
+    UnnD=psolver.solve_NDpoisson(self)
+  File "/scratch/zhaoyuha/EQuantum/EQuantum/Equantum/poissonsolver.py", line 141, in solve_NDpoisson
+    U_D = np.array([fsc.Ui[i].potential for i in fsc.D_indices])
+  File "/scratch/zhaoyuha/EQuantum/EQuantum/Equantum/poissonsolver.py", line 141, in <listcomp>
+    U_D = np.array([fsc.Ui[i].potential for i in fsc.D_indices])
+AttributeError: 'numpy.float64' object has no attribute 'potential'

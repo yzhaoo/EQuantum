@@ -137,8 +137,8 @@ def solve_NDpoisson(fsc,**kwargs):
     n_N = np.zeros(N_sites_num)
     common_indices_N = list(set(fsc.Qprime+fsc.material_indices["dopants"]).intersection(fsc.N_indices))
     for nNidx,idx in enumerate(common_indices_N):
-        n_N[nNidx]=fsc.sites[idx].charge
-    U_D = np.array([fsc.sites[i].potential for i in fsc.D_indices])
+        n_N[nNidx]=fsc.ni[idx]
+    U_D = np.array([fsc.Ui[i] for i in fsc.D_indices])
 
     sol= solve(fsc.A_mixed,assemble_input(fsc,n_N,U_D),**kwargs)
     return sol

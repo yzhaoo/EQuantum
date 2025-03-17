@@ -145,6 +145,8 @@ npol_scale=6,**kwarg)
         for site in list(self.sites.values()):
             if site.material==name:
                 setattr(site, prop, value)
+        self.ni=np.array([site.charge for i, site in self.sites.items()])
+        self.Ui=np.array([site.potential for i, site in self.sites.items()])
         if ifinitial:
             self.initial_Poisson()
             #initialize Quantum problem
@@ -209,7 +211,7 @@ npol_scale=6,**kwarg)
 
 
             if np.abs(self.log['ildos_error'][-1])>self.convergence_tol:
-                self.update_Quantum(system,ifpara=True,Ncore=20,**kwarg)
+                self.update_Quantum(system,approx="symmetry",Ncore=20,delta=self.t/20,w=np.linspace(-self.bandwidth,self.bandwidth,int(len(self.Qsites)/2)),**kwarg)
                 iter_num[2]+=1
                 continue
             else:

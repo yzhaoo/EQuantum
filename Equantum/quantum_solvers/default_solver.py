@@ -86,13 +86,18 @@ class QuantumSystem:
             d0 = d0 + d
         d0=d0/np.sum(d0)
         return e,d0 #/ntries
-    def get_ldos(self,params=None,TFapprox=True,ifpara=False,Ncore=5,**kwargs):
-        if TFapprox:
+
+    def get_ldos(self,params=None,approx="TF",Ncore=0,**kwargs):
+        if approx=="TF":
             bulk_dos= self.get_dos(**kwargs)
             
             dataall=[bulk_dos for _ in range(len(self.Qsites))]
+        elif approx=="symmetry":
+
+            dataall=self.sample_ldos(Ncore=Ncore,**kwargs)
+
         else:
-            if ifpara:
+            if Ncore>1:
                 dataall=Parallel(n_jobs=Ncore)(delayed(self.get_dos)(i=ii,**kwargs) for ii in range(len(self.Qsites)))
             else:
                 dataall=[]
@@ -100,6 +105,56 @@ class QuantumSystem:
                     datai=self.get_dos(i=ii,**kwargs)
                     dataall.append(datai)
         return np.array(dataall)
+
+    def sample_ldos(self,geometry="disk",num_sample=10,Ncore=1,**kwargs):
+        """
+        sample the ldos along the radius, interpolate the obtain results.
+
+        """
+        center = np.array([0.,0.,0.])
+        site_radii=[]
+        # Compute radial distances for each site (x-y plane)
+        for site in self.Qsites:
+            coord = np.array(site.coordinates)
+            # Compute radial distance in x-y plane relative to center
+            r = np.linalg.norm(coord[:2] - center[:2])
+            site_radii.append(r)
+        
+        # Gather all radial distances.
+        site_radii = np.array(site_radii)
+        
+        # Define radial bins (n+1 bin edges for n bins)
+        r_min, r_max = site_radii.min(), site_radii.max()
+        bins = np.linspace(r_min, r_max, num_sample + 1)
+        
+        # Prepare an array to store LDOS values for each bin.
+        
+        site_in_b=np.array([np.where((site_radii >= bins[b]) & (site_radii < bins[b+1]))[0] for b in range(num_sample)],dtype=object)
+        np.append(site_in_b[-1],np.argmax(site_radii))
+        def calculate_ldos_in_bin(bidx,**kwargs):
+            indices=site_in_b[bidx]
+            rep_site = indices[int(len(indices)/2)]
+            ldos_value = self.get_dos(i=rep_site,**kwargs)
+            return ldos_value
+
+        if Ncore>1:
+            bin_ldos=Parallel(n_jobs=Ncore)(delayed(calculate_ldos_in_bin)(bidx,**kwargs) for bidx in range(num_sample))
+        else:
+            bin_ldos = np.zeros(num_bins)
+            for b in range(num_sample):
+                bin_ldos[b]=calculate_ldos_in_bin(b,**kwargs)
+        
+        # Assign the computed LDOS to all sites in the bin.
+        dataall=[]
+        for bidx in range(num_sample):
+            dataall.append(np.array([bin_ldos[bidx] for _ in range(len(site_in_b[bidx]))]))
+
+        return np.concatenate(dataall)
+
+
+        
+
+
         
 
         

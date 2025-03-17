@@ -67,4 +67,6 @@ def get_n_from_ildos(fsc,edos_data,sample="energy"):
         for ii in range(len(edos_data)):
             nden[ii]=np.sum(edos_data[ii,1,:filled_idx[ii]])
         return nden+charge_cnp
+
+
         
