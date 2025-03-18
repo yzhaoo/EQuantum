@@ -51,13 +51,11 @@ def calculate_delta(fsc):
         for j, face_area in site.neighbors.items():
             neighbor = fsc.sites[j]
             d = np.linalg.norm(np.array(site.coordinates) - np.array(neighbor.coordinates))
-            avg_dielectric = 2.0 /(1/site.dielectric_constant + 1/neighbor.dielectric_constant)
+            avg_dielectric = -2.0 /(1/site.dielectric_constant + 1/neighbor.dielectric_constant)
             coeff = avg_dielectric * face_area * Cunit / d
             diag_val += coeff
             A_full[i, j] = -coeff
         A_full[i, i] = diag_val
-        # b_full represents the source term (e.g., the charge) at each site.
-        b_full[i] = site.charge
 
     A_full = A_full.tocsr()
 
@@ -130,7 +128,18 @@ def solve_capacitance(fsc,**kwargs):
         U_D[idx]= 1.
     U_D=U_D[fsc.D_indices]
     sol= solve(fsc.A_mixed,assemble_input(fsc,n_N,U_D),**kwargs)
-    return sol[-D_sites_num:][np.array(where_Qp_in_D)]
+    Cij=sol[-D_sites_num:][np.array(where_Qp_in_D)]
+    Cij_all=np.zeros(fsc.num_sites)
+    Cij_all[fsc.Qprime]=Cij
+    #sum over Ci of the neighboring sites Ci=sum_{ij}Cij
+    Ci=np.zeros(fsc.num_sites)
+
+    # for qidx, idx in enumerate(fsc.Qsites): #for all sites in the quantum system
+    #     for neighbor in fsc.sites[idx].neighbors:
+    #         if fsc.sites[neighbor].coordinates[2]==0. and fsc.sites[neighbor].material=='Qsystem':  # if the neighboring sites also belongs to the Qsystem
+    #             Ci[idx]+=Cij_all[neighbor] #sum over the capacitance of the neighboring sites
+
+    return Cij
 
 def solve_NDpoisson(fsc,**kwargs):
     N_sites_num=len(fsc.N_indices)
@@ -144,42 +153,6 @@ def solve_NDpoisson(fsc,**kwargs):
     return sol
 
 
-def paa_update_density(fsc, delta_U, current_density=None, capacitance=None):
-    """
-    Update the density at each site using the Poisson Adiabatic Approximation (PAA).
-    
-    The approximation is:
-        n_i(new) = n_i(old) + C_i * delta_U_i
-    where C_i is the local capacitance at site i and delta_U_i is the change in potential.
-    
-    Parameters:
-    - delta_U: dictionary (or array) mapping site IDs to the change in potential at each site.
-    - current_density: (optional) dictionary (or array) of current densities. If not provided,
-                        it is assumed that each site has an attribute 'density'.
-    - capacitance: (optional) dictionary (or array) of local capacitance values. If not provided,
-                    it is assumed that each site has an attribute 'local_capacitance'.
-                    
-    Returns:
-    - updated_density: dictionary mapping site IDs to the updated density.
-    """
-    updated_density = {}
-    
-    for i, site in fsc.sites.items():
-        # Get the current density: either from the provided dictionary/array or from the site attribute.
-        n_old = current_density[i] if current_density is not None else site.density
-        # Get the local capacitance for this site.
-        C_i = capacitance[i] if capacitance is not None else site.local_capacitance
-        # Get the potential change at this site.
-        dU = delta_U[i]
-        
-        # Apply the PAA formula:
-        updated_density[i] = n_old + C_i * dU
-        
-        # Optionally update the site's density attribute.
-        site.density = updated_density[i]
-    
-    return updated_density
-    
 
 
 def mumps_solver(A, F):

@@ -211,7 +211,7 @@ npol_scale=6,**kwarg)
 
 
             if np.abs(self.log['ildos_error'][-1])>self.convergence_tol:
-                self.update_Quantum(system,approx="symmetry",Ncore=20,delta=self.t/20,w=np.linspace(-self.bandwidth,self.bandwidth,int(len(self.Qsites)/2)),**kwarg)
+                self.update_Quantum(system,approx="symmetry",Ncore=20,num_sample=20,**kwarg)
                 iter_num[2]+=1
                 continue
             else:

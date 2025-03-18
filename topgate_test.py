@@ -32,8 +32,8 @@ syst=System(geoparams,config_file=config_file,ifqsystem=True,quantum_builder="de
 qparams={'Ufunc': lambda x:0,'phi':0.05}
 fsc=FSC(syst,ifinitial=False,params=qparams)
 
-fsc.update_BC(syst,'gate','potential',0.3)
-fsc.update_BC(syst,'backgate','potential',-0.3,ifinitial=True)
+fsc.update_BC(syst,'gate','potential',0.2)
+fsc.update_BC(syst,'backgate','potential',0.1,ifinitial=True)
 
 
 fsc.solve(syst,save=datapath+"test0003_06")

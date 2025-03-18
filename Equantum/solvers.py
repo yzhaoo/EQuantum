@@ -2,14 +2,15 @@ import numpy as np
 from scipy.interpolate import interp1d
 from scipy.optimize import minimize_scalar
 
-def local_solver_i(idx,ildos,Ci,ni,Ui,limits):
+def local_solver_i(idx,ildos,Ci,ni,Ui,limits,cnp):
     #interpolate the ildos to be a conitnuous function
     x_dis=ildos[0]-Ui
     y_dis=ildos[1]
     ildos_dis=[np.sum(y_dis[:idx]) for idx in range(len(x_dis))]
+    ildos_dis=ildos_dis-cnp
     ildos_iterp=interp1d(x_dis,ildos_dis,kind='linear',fill_value='exptrapolate')
     def dn_for_Ci(dU):
-        return -dU*Ci+ni
+        return dU*Ci+ni
     def diff(dU):
         return np.abs(dn_for_Ci(dU)-ildos_iterp(dU))
     try:
@@ -29,18 +30,20 @@ def local_solver(fsc):
     for ii in range(len(fsc.Qprime)):
         Uii=fsc.Ui[fsc.Qprime][ii]
         if fsc.lattice_type=="square":
-            elimit=(0-Uii,fsc.bandwidth-Uii)
+            elimit=(0-Uii,2*fsc.bandwidth-Uii)
+            charge_cnp= 0 
         else:
-            elimit=(-Uii-fsc.bandwidth/2,fsc.bandwidth/2-Uii)
-        dU,dn=local_solver_i(ii,fsc.ildos[ii],fsc.Ci[ii],fsc.ni[fsc.Qprime][ii],Uii,elimit)
+            elimit=(-Uii-0*fsc.bandwidth,2*fsc.bandwidth-Uii)
+            charge_cnp=0*fsc.max_fill/2
+        dU,dn=local_solver_i(ii,fsc.ildos[ii],fsc.Ci[ii],fsc.ni[fsc.Qprime][ii],Uii,elimit,charge_cnp)
         dUs[ii]=dU
         dns[ii]=dn
     return [dUs,dns]
 
-def update_Qprime(fsc,tol=0):
+def update_Qprime(fsc,tol=1e-5):
     Qprime=fsc.Qprime.copy()
     #delete the idx from self.Qprime if the local ni==0
     for idx,qsite in enumerate(fsc.Qprime):
-        if fsc.ni[qsite]<tol:
+        if np.abs(fsc.ni[qsite])<tol:
             np.delete(fsc.Qprime,idx)
     return Qprime
