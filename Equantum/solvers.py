@@ -49,5 +49,5 @@ def update_Qprime(fsc,tol=0):
             remove_idx.append(idx)
 
     fsc.N_indices=np.array(list(set(np.append(fsc.N_indices, np.array(Qprime)[remove_idx]))))
-    fsc.D_indices=set(range())
-    return 
+    fsc.D_indices=np.array(list(set(range(fsc.num_sites))-set(fsc.N_indices)))
+    return np.delete(Qprime, remove_idx)

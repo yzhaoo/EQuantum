@@ -1,6 +1,7 @@
 import numpy as np
 from sites import Site
 from surfaces import Surface
+import matplotlib.path as mpltPath
 
 def polygon_area(vertices):
     """
@@ -125,3 +126,55 @@ def create_surfaces_from_geom3d(geom3d, sites):
 # surfaces_list = create_surfaces_from_geom3d(geom3d, sites_dict)
 # for s in surfaces_list:
 #     print(s)
+
+def assign_point_to_dot(sites):
+    coords=[[np.linalg.norm((site.coordinates[0],site.coordinates[1])),site.coordinates[2]]for site in list(sites.values())]
+    coords=np.array(coords)/1000
+    polygon=[[0,0],[100,0],[110,30],[120,40],[130,40],[130,60],[0,60]]
+    
+    path=mpltPath.Path(polygon)
+    point_in=np.where(True==path.contains_points(coords))
+    for idx in point_in:
+        sites[idx].material='gate'
+        sites[idx].potential=0.3
+        sites[idx].BCtype=0
+        sites[idx].dielectric_constant=10
+
+geo_params={"r_system":0.5,
+"r_qsystem":0.45,
+"top_dielectric":0.05,
+"bot_dielectric":0.05,
+"backgate":0.011}
+def assign_point_to_material(site,params=geo_params):
+    r_system=params['r_system']
+    r_qsystem=params['r_qsystem']
+    t_top_dielectric=params['top_dielectric']
+    t_bot_dielectric=params['bot_dielectric']
+    t_backgate=params['backgate']
+
+    r=np.linalg.norm((site.coordinates[0],site.coordinates[1]))
+    z=site.coordinates[2]
+
+    if site.material != 'gate':
+        if z==0 and r<=r_qsystem:
+            sites[idx].material='Qsystem'
+            sites[idx].potential=0
+            sites[idx].BCtype=0
+            sites[idx].dielectric_constant=3
+        elif -t_bot_dielectric-t_backgate<=z<-t_bot_dielectric and r<=r_system:
+            sites[idx].material='backgate'
+            sites[idx].potential=-2
+            sites[idx].BCtype=0
+            sites[idx].dielectric_constant=10
+        elif (-t_bot_dielectric<=z<0 or 0<z<=t_top_dielectric) and r<r_system:
+            sites[idx].material='dielectric'
+            sites[idx].potential=0
+            sites[idx].BCtype=1
+            sites[idx].dielectric_constant=3.3
+
+
+
+    
+
+
+

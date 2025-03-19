@@ -18,7 +18,7 @@ import def_system_func as systemfunc
 # from site_module import Site
 
 class System:
-    def __init__(self, geometry_params, config_file=None,ifqsystem=False,t=1,quantum_builder="default"):
+    def __init__(self, geometry_params, assign_mat=True, config_file=None,ifqsystem=False,t=1,quantum_builder="default"):
         """
         Initialize the System by building the 3D geometry and assigning site properties.
 
@@ -54,9 +54,12 @@ class System:
         self.Qsites=None
         self.N_indices=None
         self.D_indices=None
-        if config_file is not None:
-            # Load configuration file defining regions and material properties.
-            self.update_sites_from_blender(filename=config_file)
+        if assign_mat is True:
+            if config_file is not None:
+                # Load configuration file defining regions and material properties.
+                self.update_sites_from_blender(filename=config_file)
+            else:
+                self.update_sites_from_func()
 
         #initialize quantum system
         #scale the hopping amplitude according to the discretization level
@@ -174,7 +177,7 @@ class System:
     def build_qsystem(self,quantum_builder,**kwarg):
         self.qsystem=qbuilder.build_system(self,builder=quantum_builder,**kwarg)
 
-    def plot_geometry(self, prop=None):
+    def plot_geometry(self, material=None, prop=None):
         """
         Plot the discretized sites in 3D space.
         
@@ -184,7 +187,21 @@ class System:
         """
         fig = plt.figure(figsize=(10, 8))
         ax = fig.add_subplot(111, projection='3d')
-
+        if material is not None:
+            coords=[]
+            prop_values=[]
+            for site in self.sites.values():
+                if site.material==material:
+                    value = getattr(site, prop, None)
+                    coords.append(site.coordinates)
+                    prop_values.append(value)
+            cmap = cm.viridis
+            sc = ax.scatter(coords[:, 0], coords[:, 1], coords[:, 2],
+                            c=prop_values, cmap=cmap, s=10)
+            # Add a colorbar to indicate the property values.
+            cbar = fig.colorbar(sc, ax=ax, pad=0.1)
+            cbar.set_label(prop)
+            
         if prop is None:
             # Group sites by material.
             color_map = {
@@ -306,4 +323,12 @@ class System:
             else:
                 print(f"Warning: Site with id {site_id} not found in the system.")
         self.update_mat_indices()
+
+    def update_sites_from_func(self):
+        systemfunc.assign_point_to_dot(self.sites)
+        for site in list(self.sites.values()):
+            assign_point_to_material(site)
+
+        self.update_mat_indices()
+
 

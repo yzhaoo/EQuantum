@@ -144,8 +144,7 @@ def solve_capacitance(fsc,**kwargs):
 def solve_NDpoisson(fsc,**kwargs):
     N_sites_num=len(fsc.N_indices)
     n_N = np.zeros(N_sites_num)
-    common_indices_N = list(set(fsc.Qprime+fsc.material_indices["dopants"]).intersection(fsc.N_indices))
-    for nNidx,idx in enumerate(common_indices_N):
+    for nNidx,idx in enumerate(fsc.N_indices):
         n_N[nNidx]=fsc.ni[idx]
     U_D = np.array([fsc.Ui[i] for i in fsc.D_indices])
 
