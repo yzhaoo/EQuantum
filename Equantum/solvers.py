@@ -40,10 +40,14 @@ def local_solver(fsc):
         dns[ii]=dn
     return [dUs,dns]
 
-def update_Qprime(fsc,tol=1e-5):
+def update_Qprime(fsc,tol=0):
     Qprime=fsc.Qprime.copy()
     #delete the idx from self.Qprime if the local ni==0
+    remove_idx=[]
     for idx,qsite in enumerate(fsc.Qprime):
-        if np.abs(fsc.ni[qsite])<tol:
-            np.delete(fsc.Qprime,idx)
-    return Qprime
+        if fsc.ni[qsite]<tol or fsc.ni[qsite]>0.95*fsc.max_fill:
+            remove_idx.append(idx)
+
+    fsc.N_indices=np.array(list(set(np.append(fsc.N_indices, np.array(Qprime)[remove_idx]))))
+    fsc.D_indices=set(range())
+    return 
