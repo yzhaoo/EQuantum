@@ -47,7 +47,7 @@ def update_Qprime(fsc,tol=0):
     for idx,qsite in enumerate(fsc.Qprime):
         if fsc.ni[qsite]<tol or fsc.ni[qsite]>0.95*fsc.max_fill:
             remove_idx.append(idx)
-
-    fsc.N_indices=np.array(list(set(np.append(fsc.N_indices, np.array(Qprime)[remove_idx]))))
-    fsc.D_indices=np.array(list(set(range(fsc.num_sites))-set(fsc.N_indices)))
+    if remove_idx !=[]:
+        fsc.N_indices=np.array(list(set(np.append(fsc.N_indices, np.array(Qprime)[remove_idx]))))
+        fsc.D_indices=np.array(list(set(range(fsc.num_sites))-set(fsc.N_indices)))
     return np.delete(Qprime, remove_idx)
