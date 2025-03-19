@@ -129,11 +129,11 @@ def create_surfaces_from_geom3d(geom3d, sites):
 
 def assign_point_to_dot(sites):
     coords=[[np.linalg.norm((site.coordinates[0],site.coordinates[1])),site.coordinates[2]]for site in list(sites.values())]
-    coords=np.array(coords)/1000
     polygon=[[0,0],[100,0],[110,30],[120,40],[130,40],[130,60],[0,60]]
+    polygon=np.array(polygon)/1000
     
     path=mpltPath.Path(polygon)
-    point_in=np.where(True==path.contains_points(coords))
+    point_in=np.where(True==path.contains_points(coords))[0]
     for idx in point_in:
         sites[idx].material='gate'
         sites[idx].potential=0.3
@@ -157,20 +157,20 @@ def assign_point_to_material(site,params=geo_params):
 
     if site.material != 'gate':
         if z==0 and r<=r_qsystem:
-            sites[idx].material='Qsystem'
-            sites[idx].potential=0
-            sites[idx].BCtype=0
-            sites[idx].dielectric_constant=3
+            site.material='Qsystem'
+            site.potential=0
+            site.BCtype=0
+            site.dielectric_constant=3
         elif -t_bot_dielectric-t_backgate<=z<-t_bot_dielectric and r<=r_system:
-            sites[idx].material='backgate'
-            sites[idx].potential=-2
-            sites[idx].BCtype=0
-            sites[idx].dielectric_constant=10
+            site.material='backgate'
+            site.potential=-2
+            site.BCtype=0
+            site.dielectric_constant=10
         elif (-t_bot_dielectric<=z<0 or 0<z<=t_top_dielectric) and r<r_system:
-            sites[idx].material='dielectric'
-            sites[idx].potential=0
-            sites[idx].BCtype=1
-            sites[idx].dielectric_constant=3.3
+            site.material='dielectric'
+            site.potential=0
+            site.BCtype=1
+            site.dielectric_constant=3.3
 
 
 

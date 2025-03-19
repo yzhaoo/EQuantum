@@ -195,6 +195,8 @@ class System:
                     value = getattr(site, prop, None)
                     coords.append(site.coordinates)
                     prop_values.append(value)
+            coords=np.array(coords)
+            prop_values=np.array(prop_values)
             cmap = cm.viridis
             sc = ax.scatter(coords[:, 0], coords[:, 1], coords[:, 2],
                             c=prop_values, cmap=cmap, s=10)
@@ -202,7 +204,7 @@ class System:
             cbar = fig.colorbar(sc, ax=ax, pad=0.1)
             cbar.set_label(prop)
             
-        if prop is None:
+        elif prop is None:
             # Group sites by material.
             color_map = {
             'dielectric': (135/255, 213/255, 216/255, 0.1),
@@ -327,7 +329,7 @@ class System:
     def update_sites_from_func(self):
         systemfunc.assign_point_to_dot(self.sites)
         for site in list(self.sites.values()):
-            assign_point_to_material(site)
+            systemfunc.assign_point_to_material(site)
 
         self.update_mat_indices()
 
