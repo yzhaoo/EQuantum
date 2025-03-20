@@ -11,7 +11,7 @@ from mpl_toolkits.mplot3d import Axes3D  # needed for 3D plotting
 import matplotlib.cm as cm
 import matplotlib.colors as mcolors
 class FSC:
-    def __init__(self, system, ifinitial=True,params=None,convergence_tol=1e-13, max_iter=50):
+    def __init__(self, system, ifinitial=True,params=None,convergence_tol=1e-13, max_iter=50,FL_pinning=True):
         """
         Initialize the self-consistent solver.
 
@@ -62,6 +62,8 @@ class FSC:
         'ildos_error':[1]}
 
         if ifinitial:
+            if FL_pinning:
+                solvers.Fermi_level_pinning(self)
             #initialize Posisson problem
             self.initial_Poisson()
         if params is not None:
@@ -141,13 +143,15 @@ npol_scale=6,**kwarg)
         self.Ui[self.Qprime]+=dUdn[0]
         self.ni[self.Qprime]+=dUdn[1]
 
-    def update_BC(self,syst,name,prop,value,ifinitial=False):
+    def update_BC(self,syst,name,prop,value,ifinitial=False,FL_pinning=True):
         for site in list(self.sites.values()):
             if site.material==name:
                 setattr(site, prop, value)
         self.ni=np.array([site.charge for i, site in self.sites.items()])
         self.Ui=np.array([site.potential for i, site in self.sites.items()])
         if ifinitial:
+            if FL_pinning:
+                solvers.Fermi_level_pinning(self)
             self.initial_Poisson()
             #initialize Quantum problem
 
@@ -273,7 +277,6 @@ npol_scale=6,**kwarg)
         will be colored using a continuous colormap based on that property's value.
         """
         fig, ax=plt.subplots(figsize=(10,8))
-
         # Color sites based on a continuous property, e.g., "charge".
         coords = np.array([site.coordinates for site in self.sites.values()])[self.Qsites]
         prop_values = np.array(prop_values)

@@ -129,10 +129,10 @@ def solve_capacitance(fsc,**kwargs):
     U_D=U_D[fsc.D_indices]
     sol= solve(fsc.A_mixed,assemble_input(fsc,n_N,U_D),**kwargs)
     Cij=sol[-D_sites_num:][np.array(where_Qp_in_D)]
-    Cij_all=np.zeros(fsc.num_sites)
-    Cij_all[fsc.Qprime]=Cij
-    #sum over Ci of the neighboring sites Ci=sum_{ij}Cij
-    Ci=np.zeros(fsc.num_sites)
+    # Cij_all=np.zeros(fsc.num_sites)
+    # Cij_all[fsc.Qprime]=Cij
+    # #sum over Ci of the neighboring sites Ci=sum_{ij}Cij
+    # Ci=np.zeros(fsc.num_sites)
 
     # for qidx, idx in enumerate(fsc.Qsites): #for all sites in the quantum system
     #     for neighbor in fsc.sites[idx].neighbors:
