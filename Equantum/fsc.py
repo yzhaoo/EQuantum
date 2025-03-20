@@ -58,7 +58,7 @@ class FSC:
         self.convergence_tol = convergence_tol
         self.max_iter = max_iter
         self.log={'ni_error':[1],
-        'Qprime_len':[],
+        'Qprime_len':[len(self.Qprime)],
         'ildos_error':[1]}
 
         if ifinitial:
@@ -89,20 +89,19 @@ class FSC:
         initialize the Poisson problem without Quantum system for the given boundary condition.
          
         """
+        psolver.calculate_delta(self)
         #initialized Delta_matrix and A_mixed
         self.update_Poisson()
+        self.Ci=psolver.solve_capacitance(self)
         print("The poisson problem has been initialized.")
 
     def update_Poisson(self):
-        psolver.calculate_delta(self)
         #solve the initial ND poisson problem and update ni, Ui
         pre_ni=self.ni.copy()
         UnnD=psolver.solve_NDpoisson(self)
         self.ni[self.D_indices]=UnnD[-len(self.D_indices):]
         self.log['ni_error'].append(np.mean(pre_ni-self.ni))
         self.Ui[self.N_indices]=UnnD[:len(self.N_indices)]
-        #initialized Ci
-        self.Ci=psolver.solve_capacitance(self)
         
 
     def initial_Quantum(self,system,**kwarg):
@@ -159,9 +158,15 @@ npol_scale=6,**kwarg)
     def update_Qprime(self,tol=1e-7):
         Qprime_new=solvers.update_Qprime(self,tol)
         self.log['Qprime_len'].append(len(Qprime_new))
+        Qprime_his=self.log['Qprime_len']
+        self.Qprime=Qprime_new
+        if Qprime_his[-1]!=Qprime_his[-2]:
+
+            psolver.calculate_delta(self)
+            self.Ci=psolver.solve_capacitance(self)
         #print(self.log['Qprime_len'])
         #print(len(Qprime_new))
-        self.Qprime=Qprime_new
+        
 
 
     def solve(self,system,save=None,**kwarg):

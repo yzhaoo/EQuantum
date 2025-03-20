@@ -119,7 +119,7 @@ def solve_capacitance(fsc,**kwargs):
     common_indices_D = list(set(fsc.Qprime).intersection(fsc.D_indices))
     where_Qp_in_D=[]
     for didx,idx in enumerate(fsc.D_indices):
-        if fsc.sites[idx].material=='Qsystem':
+        if idx in fsc.Qprime:
             where_Qp_in_D.append(didx)
 
     # for Nidx,idx in enumerate(common_indices_N):

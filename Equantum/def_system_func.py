@@ -160,7 +160,7 @@ def assign_point_to_material(site,params=geo_params):
             site.material='Qsystem'
             site.potential=0
             site.BCtype=0
-            site.dielectric_constant=3
+            site.dielectric_constant=9.3
         elif -t_bot_dielectric-t_backgate<=z<-t_bot_dielectric and r<=r_system:
             site.material='backgate'
             site.potential=-2

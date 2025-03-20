@@ -45,7 +45,7 @@ def update_Qprime(fsc,tol=0):
     #delete the idx from self.Qprime if the local ni==0
     remove_idx=[]
     for idx,qsite in enumerate(fsc.Qprime):
-        if fsc.ni[qsite]<tol or fsc.ni[qsite]>0.95*fsc.max_fill:
+        if fsc.ni[qsite]<tol or fsc.ni[qsite]>0.95*fsc.max_fill or fsc.Ci[idx]<-2:
             remove_idx.append(idx)
     if remove_idx !=[]:
         fsc.N_indices=np.array(list(set(np.append(fsc.N_indices, np.array(Qprime)[remove_idx]))))
@@ -61,12 +61,15 @@ def Fermi_level_pinning(fsc):
         for neighbor in fsc.sites[idx].neighbors:
             if fsc.sites[neighbor].material=='gate':
                 remove_idx.append(qidx)
+                #fsc.sites[idx].charge=fsc.max_fill
                 if fsc.sites[neighbor].potential > fsc.bandwidth:
                     fsc.sites[idx].potential=fsc.bandwidth
+                    #print("the potential of the sites under the contact has been fixed to the bandwidth.")
                 else:
                     fsc.sites[idx].potential=fsc.sites[neighbor].potential
+                    #print("the potential of the sites under the contact has been fixed to the gate potential.")
                 break
-    if remove_idx !=[]:
-        fsc.N_indices=np.array(list(set(np.append(fsc.N_indices, np.array(Qprime)[remove_idx]))))
-        fsc.D_indices=np.array(list(set(range(fsc.num_sites))-set(fsc.N_indices)))
+    # if remove_idx !=[]:
+    #     fsc.N_indices=np.array(list(set(np.append(fsc.N_indices, np.array(Qprime)[remove_idx]))))
+    #     fsc.D_indices=np.array(list(set(range(fsc.num_sites))-set(fsc.N_indices)))
     fsc.Qprime= np.delete(Qprime, remove_idx)
