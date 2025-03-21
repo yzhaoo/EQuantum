@@ -54,7 +54,7 @@ class FSC:
         self.Qprime=system.Qsites.copy()
         self.qsystem=system.qsystem
         self.Qsites_map={}
-        self.Qp_in_Q={ii: list(fsc.Qsites).index(qpidx) for ii,qpidx in enumerate(fsc.Qprime)}
+        self.Qp_in_Q={ii: list(self.Qsites).index(qpidx) for ii,qpidx in enumerate(self.Qprime)}
         
         self.convergence_tol = convergence_tol
         self.max_iter = max_iter
@@ -165,7 +165,7 @@ npol_scale=6,**kwarg)
             psolver.calculate_delta(self)
             self.update_Poisson()
             self.Ci=psolver.solve_capacitance(self)
-        self.Qp_in_Q={ii: list(fsc.Qsites).index(qpidx) for ii,qpidx in enumerate(fsc.Qprime)}
+        self.Qp_in_Q={ii: list(self.Qsites).index(qpidx) for ii,qpidx in enumerate(self.Qprime)}
         #print(self.log['Qprime_len'])
         #print(len(Qprime_new))
         

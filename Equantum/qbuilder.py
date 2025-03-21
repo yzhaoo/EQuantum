@@ -60,21 +60,17 @@ def update_ildos(fsc,syst,**kwarg):
 
 def get_n_from_ildos(fsc,edos_data,sample="energy"):
     ##edos_data should be the dos for ee<0 [site,energies,dos]
-    nden=np.zeros(len(edos_data))
+    nden=np.zeros(len(fsc.Qprime))
     if sample == "energy":
         charge_cnp= 0 #if fsc.lattice_type=="square" else -fsc.max_fill/2
         pinned_idx=np.where(fsc.Ui[fsc.Qprime]<=0)[0]
         filled_idx=[]
-        for ii in range(len(edos_data)):
-            if ii in pinned_idx:
-                filled_idx.append([0])
-            else:
-                filled_idx.append(np.where(edos_data[ii,0,:]<=fsc.Ui[fsc.Qprime][ii])[0][-1])
-        for ii in range(len(edos_data)):
+        for ii in range(len(fsc.Qprime)):
             if ii in pinned_idx:
                 pass
             else:
-                nden[ii]=np.sum(edos_data[ii,1,:filled_idx[ii]])
+                filled_idx=np.where(edos_data[fsc.Qp_in_Q[ii],0,:]<=fsc.Ui[fsc.Qprime][ii])[0][-1]
+                nden[ii]=np.sum(edos_data[fsc.Qp_in_Q[ii],1,:filled_idx])
         return nden+charge_cnp
 
 
