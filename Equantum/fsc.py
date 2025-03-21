@@ -11,7 +11,7 @@ from mpl_toolkits.mplot3d import Axes3D  # needed for 3D plotting
 import matplotlib.cm as cm
 import matplotlib.colors as mcolors
 class FSC:
-    def __init__(self, system, ifinitial=True,params=None,convergence_tol=1e-13, max_iter=50,FL_pinning=True):
+    def __init__(self, system, ifinitial=True,params=None,convergence_tol=1e-10, max_iter=50,FL_pinning=True):
         """
         Initialize the self-consistent solver.
 
@@ -131,8 +131,8 @@ npol_scale=6,**kwarg)
         pre_ildos=self.ildos.copy()
         qbuilder.update_U(self,system)
         self.ildos=qbuilder.update_ildos(self,system,delta=self.t/20,w=np.linspace(-self.bandwidth,self.bandwidth,int(len(self.Qsites)/2)),**kwarg)
-        self.log['ildos_error'].append(np.mean(self.ildos-pre_ildos))
-        self.ni[self.Qsites]=qbuilder.get_n_from_ildos(self,self.ildos)
+        #self.log['ildos_error'].append(np.mean(self.ildos-pre_ildos))
+        self.ni[self.Qprime]=qbuilder.get_n_from_ildos(self,self.ildos)
 
 
 
@@ -161,8 +161,8 @@ npol_scale=6,**kwarg)
         Qprime_his=self.log['Qprime_len']
         self.Qprime=Qprime_new
         if Qprime_his[-1]!=Qprime_his[-2]:
-
             psolver.calculate_delta(self)
+            self.update_Poisson()
             self.Ci=psolver.solve_capacitance(self)
         #print(self.log['Qprime_len'])
         #print(len(Qprime_new))
@@ -180,14 +180,14 @@ npol_scale=6,**kwarg)
         #initialize the problem by conducting iteration twice:
         initial_loop=0
         self.update_Qprime()
-        while initial_loop<2:
-            self.local_solver()
-            self.update_Qprime()
-            psolver.calculate_delta(self)
-            self.Ci=psolver.solve_capacitance(self)
-            initial_loop+=1
+        # while initial_loop<2:
+        #     self.local_solver()
+        #     self.update_Qprime()
+        #     psolver.calculate_delta(self)
+        #     self.Ci=psolver.solve_capacitance(self)
+        #     initial_loop+=1
         iter_num=[0,0,0]
-        self.update_Poisson()
+        # self.update_Poisson()
         #self.update_Quantum(system)
         if save is not None:
             Uis=[]

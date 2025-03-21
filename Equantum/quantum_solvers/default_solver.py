@@ -87,14 +87,14 @@ class QuantumSystem:
         d0=d0/np.sum(d0)
         return e,d0 #/ntries
 
-    def get_ldos(self,params=None,approx="TF",Ncore=0,**kwargs):
+    def get_ldos(self,fsc,params=None,approx="TF",Ncore=0,**kwargs):
         if approx=="TF":
             bulk_dos= self.get_dos(**kwargs)
             
             dataall=[bulk_dos for _ in range(len(self.Qsites))]
         elif approx=="symmetry":
 
-            dataall=self.sample_ldos(Ncore=Ncore,**kwargs)
+            dataall=self.sample_ldos(fsc,Ncore=Ncore,**kwargs)
 
         else:
             if Ncore>1:
@@ -106,15 +106,17 @@ class QuantumSystem:
                     dataall.append(datai)
         return np.array(dataall)
 
-    def sample_ldos(self,geometry="disk",num_sample=10,Ncore=1,**kwargs):
+    def sample_ldos(self,fsc,eometry="disk",num_sample=10,Ncore=1,**kwargs):
         """
         sample the ldos along the radius, interpolate the obtain results.
 
         """
         center = np.array([0.,0.,0.])
         site_radii=[]
+        Qpsites=[fsc.sites[idx] for idx in fsc.Qprime]
+        Qp_in_Q={ii: list(fsc.Qsites).index(qpidx) for ii,qpidx in enumerate(fsc.Qprime)}
         # Compute radial distances for each site (x-y plane)
-        for site in self.Qsites:
+        for site in Qpsites:
             coord = np.array(site.coordinates)
             # Compute radial distance in x-y plane relative to center
             r = np.linalg.norm(coord[:2] - center[:2])
@@ -130,11 +132,11 @@ class QuantumSystem:
         # Prepare an array to store LDOS values for each bin.
         
         site_in_b=np.array([np.where((site_radii >= bins[b]) & (site_radii < bins[b+1]))[0] for b in range(num_sample)],dtype=object)
-        np.append(site_in_b[-1],np.argmax(site_radii))
+        site_in_b[-1]=np.append(site_in_b[-1],np.where((site_radii>=bins[num_sample]))[0])
         def calculate_ldos_in_bin(bidx,**kwargs):
             indices=site_in_b[bidx]
             rep_site = indices[int(len(indices)/2)]
-            ldos_value = self.get_dos(i=rep_site,**kwargs)
+            ldos_value = self.get_dos(i=Qp_in_Q[rep_site],**kwargs)
             return ldos_value
 
         if Ncore>1:
@@ -148,8 +150,8 @@ class QuantumSystem:
         dataall=[]
         for bidx in range(num_sample):
             dataall.append(np.array([bin_ldos[bidx] for _ in range(len(site_in_b[bidx]))]))
-
-        return np.concatenate(dataall)
+        sortidx=np.argsort(np.concatenate([(site_in_b[bidx]) for bidx in range(num_sample)]))
+        return np.concatenate(dataall)[sortidx]
 
 
         

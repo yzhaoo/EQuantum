@@ -115,12 +115,9 @@ def solve_capacitance(fsc,**kwargs):
     D_sites_num=len(fsc.D_indices)
     n_N = np.zeros(N_sites_num)
     U_D = np.zeros(fsc.num_sites)
-    common_indices_N = list(set(fsc.Qprime).intersection(fsc.N_indices))
+    
     common_indices_D = list(set(fsc.Qprime).intersection(fsc.D_indices))
-    where_Qp_in_D=[]
-    for didx,idx in enumerate(fsc.D_indices):
-        if idx in fsc.Qprime:
-            where_Qp_in_D.append(didx)
+    where_Qp_in_D=[list(fsc.D_indices).index(x) for x in fsc.Qprime]
 
     # for Nidx,idx in enumerate(common_indices_N):
     #     n_N[Nidx]=fsc.sites[idx].charge
@@ -129,15 +126,6 @@ def solve_capacitance(fsc,**kwargs):
     U_D=U_D[fsc.D_indices]
     sol= solve(fsc.A_mixed,assemble_input(fsc,n_N,U_D),**kwargs)
     Cij=sol[-D_sites_num:][np.array(where_Qp_in_D)]
-    # Cij_all=np.zeros(fsc.num_sites)
-    # Cij_all[fsc.Qprime]=Cij
-    # #sum over Ci of the neighboring sites Ci=sum_{ij}Cij
-    # Ci=np.zeros(fsc.num_sites)
-
-    # for qidx, idx in enumerate(fsc.Qsites): #for all sites in the quantum system
-    #     for neighbor in fsc.sites[idx].neighbors:
-    #         if fsc.sites[neighbor].coordinates[2]==0. and fsc.sites[neighbor].material=='Qsystem':  # if the neighboring sites also belongs to the Qsystem
-    #             Ci[idx]+=Cij_all[neighbor] #sum over the capacitance of the neighboring sites
 
     return Cij
 

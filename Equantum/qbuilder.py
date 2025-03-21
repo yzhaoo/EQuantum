@@ -48,7 +48,7 @@ def update_ildos(fsc,syst,**kwarg):
     elif builder=="default":
         cnp= fsc.bandwidth #if fsc.lattice_type=="square" else 0*fsc.t
         
-        dataall= fsc.qsystem.get_ldos(**kwarg)
+        dataall= fsc.qsystem.get_ldos(fsc,**kwarg)
         #rescale the filling according to the maximal carrier density
         dataall[:,1,:]*=fsc.max_fill
         #dataall[:,1,:]+=charge_cnp
@@ -63,9 +63,18 @@ def get_n_from_ildos(fsc,edos_data,sample="energy"):
     nden=np.zeros(len(edos_data))
     if sample == "energy":
         charge_cnp= 0 #if fsc.lattice_type=="square" else -fsc.max_fill/2
-        filled_idx=[np.where(edos_data[ii,0,:]<=0.)[0][-1] for ii in range(len(edos_data))]
+        pinned_idx=np.where(fsc.Ui[fsc.Qprime]<=0)[0]
+        filled_idx=[]
         for ii in range(len(edos_data)):
-            nden[ii]=np.sum(edos_data[ii,1,:filled_idx[ii]])
+            if ii in pinned_idx:
+                filled_idx.append([0])
+            else:
+                filled_idx.append(np.where(edos_data[ii,0,:]<=fsc.Ui[fsc.Qprime][ii])[0][-1])
+        for ii in range(len(edos_data)):
+            if ii in pinned_idx:
+                pass
+            else:
+                nden[ii]=np.sum(edos_data[ii,1,:filled_idx[ii]])
         return nden+charge_cnp
 
 
