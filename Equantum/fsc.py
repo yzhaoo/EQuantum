@@ -11,7 +11,7 @@ from mpl_toolkits.mplot3d import Axes3D  # needed for 3D plotting
 import matplotlib.cm as cm
 import matplotlib.colors as mcolors
 class FSC:
-    def __init__(self, system, ifinitial=True,params=None,convergence_tol=1e-10, max_iter=50,FL_pinning=True):
+    def __init__(self, system, ifinitial=True,params=None,convergence_tol=1e-8, max_iter=50,FL_pinning=True):
         """
         Initialize the self-consistent solver.
 
@@ -54,6 +54,7 @@ class FSC:
         self.Qprime=system.Qsites.copy()
         self.qsystem=system.qsystem
         self.Qsites_map={}
+        self.Qp_in_Q={ii: list(fsc.Qsites).index(qpidx) for ii,qpidx in enumerate(fsc.Qprime)}
         
         self.convergence_tol = convergence_tol
         self.max_iter = max_iter
@@ -130,7 +131,7 @@ npol_scale=6,**kwarg)
     def update_Quantum(self,system,**kwarg):
         pre_ildos=self.ildos.copy()
         qbuilder.update_U(self,system)
-        self.ildos=qbuilder.update_ildos(self,system,delta=self.t/20,w=np.linspace(-self.bandwidth,self.bandwidth,int(len(self.Qsites)/2)),**kwarg)
+        self.ildos[np.array(list(self.Qp_in_Q.values()))]=qbuilder.update_ildos(self,system,delta=self.t/20,w=np.linspace(-self.bandwidth,self.bandwidth,int(len(self.Qsites)/2)),**kwarg)
         #self.log['ildos_error'].append(np.mean(self.ildos-pre_ildos))
         self.ni[self.Qprime]=qbuilder.get_n_from_ildos(self,self.ildos)
 
@@ -164,6 +165,7 @@ npol_scale=6,**kwarg)
             psolver.calculate_delta(self)
             self.update_Poisson()
             self.Ci=psolver.solve_capacitance(self)
+        self.Qp_in_Q={ii: list(fsc.Qsites).index(qpidx) for ii,qpidx in enumerate(fsc.Qprime)}
         #print(self.log['Qprime_len'])
         #print(len(Qprime_new))
         

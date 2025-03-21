@@ -114,7 +114,6 @@ class QuantumSystem:
         center = np.array([0.,0.,0.])
         site_radii=[]
         Qpsites=[fsc.sites[idx] for idx in fsc.Qprime]
-        Qp_in_Q={ii: list(fsc.Qsites).index(qpidx) for ii,qpidx in enumerate(fsc.Qprime)}
         # Compute radial distances for each site (x-y plane)
         for site in Qpsites:
             coord = np.array(site.coordinates)
@@ -136,7 +135,7 @@ class QuantumSystem:
         def calculate_ldos_in_bin(bidx,**kwargs):
             indices=site_in_b[bidx]
             rep_site = indices[int(len(indices)/2)]
-            ldos_value = self.get_dos(i=Qp_in_Q[rep_site],**kwargs)
+            ldos_value = self.get_dos(i=fsc.Qp_in_Q[rep_site],**kwargs)
             return ldos_value
 
         if Ncore>1:

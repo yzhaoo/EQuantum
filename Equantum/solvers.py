@@ -27,6 +27,7 @@ def local_solver_i(idx,ildos,Ci,ni,Ui,limits,cnp):
 def local_solver(fsc):
     dUs=np.zeros(len(fsc.Qprime))
     dns=np.zeros(len(fsc.Qprime))
+    
     for ii in range(len(fsc.Qprime)):
         Uii=fsc.Ui[fsc.Qprime][ii]
         if fsc.lattice_type=="square":
@@ -35,7 +36,7 @@ def local_solver(fsc):
         else:
             elimit=(-Uii-0*fsc.bandwidth,2*fsc.bandwidth-Uii)
             charge_cnp=0*fsc.max_fill/2
-        dU,dn=local_solver_i(ii,fsc.ildos[ii],fsc.Ci[ii],fsc.ni[fsc.Qprime][ii],Uii,elimit,charge_cnp)
+        dU,dn=local_solver_i(ii,fsc.ildos[fsc.Qp_in_Q[ii]],fsc.Ci[ii],fsc.ni[fsc.Qprime][ii],Uii,elimit,charge_cnp)
         dUs[ii]=dU
         dns[ii]=dn
     return [dUs,dns]
