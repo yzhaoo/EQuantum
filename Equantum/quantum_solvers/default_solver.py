@@ -88,6 +88,7 @@ class QuantumSystem:
         return e,d0 #/ntries
 
     def get_ldos(self,fsc,params=None,approx="TF",Ncore=0,**kwargs):
+        Erange=np.linspace(-fsc.bandwidth,fsc.bandwidth,int(len(fsc.Qsites)/2))
         if approx=="TF":
             bulk_dos= self.get_dos(**kwargs)
             
@@ -98,7 +99,7 @@ class QuantumSystem:
 
         else:
             if Ncore>1:
-                dataall=Parallel(n_jobs=Ncore)(delayed(self.get_dos)(i=ii,**kwargs) for ii in range(len(self.Qsites)))
+                dataall=Parallel(n_jobs=Ncore)(delayed(self.get_dos)(i=ii,w=Erange-fsc.Ui[fsc.Qsites][ii],**kwargs) for ii in range(len(self.Qsites)))
             else:
                 dataall=[]
                 for ii in tqdm(range(len(self.Qsites))):

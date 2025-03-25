@@ -141,7 +141,7 @@ def assign_point_to_dot(sites):
         sites[idx].dielectric_constant=10
 
 geo_params={"r_system":1,
-"r_qsystem":0.9,
+"r_qsystem":0.99,
 "top_dielectric":0.05,
 "bot_dielectric":0.05,
 "backgate":0.02}

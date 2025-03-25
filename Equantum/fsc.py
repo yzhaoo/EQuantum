@@ -132,7 +132,7 @@ npol_scale=6,**kwarg)
     def update_Quantum(self,system,**kwarg):
         pre_ildos=self.ildos.copy()
         qbuilder.update_U(self,system)
-        self.ildos[np.array(list(self.Qp_in_Q.values()))]=qbuilder.update_ildos(self,system,delta=self.t/20,w=np.linspace(-self.bandwidth,self.bandwidth,int(len(self.Qsites)/2)),**kwarg)
+        self.ildos[np.array(list(self.Qp_in_Q.values()))]=qbuilder.update_ildos(self,system,delta=self.t/20,**kwarg)
         #self.log['ildos_error'].append(np.mean(self.ildos-pre_ildos))
         self.ni[self.Qprime]=qbuilder.get_n_from_ildos(self,self.ildos)
 
@@ -223,7 +223,7 @@ npol_scale=6,**kwarg)
 
 
             if np.abs(self.log['ildos_error'][-1])>self.convergence_tol:
-                self.update_Quantum(system,approx="symmetry",Ncore=self.Ncore,num_sample=40,**kwarg)
+                self.update_Quantum(system,approx="symmetry",Ncore=self.Ncore,num_sample=self.Ncore,**kwarg)
                 iter_num[2]+=1
                 continue
             else:
