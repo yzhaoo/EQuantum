@@ -140,11 +140,11 @@ def assign_point_to_dot(sites):
         sites[idx].BCtype=0
         sites[idx].dielectric_constant=10
 
-geo_params={"r_system":0.5,
-"r_qsystem":0.45,
+geo_params={"r_system":1,
+"r_qsystem":0.9,
 "top_dielectric":0.05,
 "bot_dielectric":0.05,
-"backgate":0.011}
+"backgate":0.02}
 def assign_point_to_material(site,params=geo_params):
     r_system=params['r_system']
     r_qsystem=params['r_qsystem']

@@ -11,7 +11,7 @@ from mpl_toolkits.mplot3d import Axes3D  # needed for 3D plotting
 import matplotlib.cm as cm
 import matplotlib.colors as mcolors
 class FSC:
-    def __init__(self, system, ifinitial=True,params=None,convergence_tol=1e-8, max_iter=50,FL_pinning=True):
+    def __init__(self, system, ifinitial=True,params=None,convergence_tol=1e-8, max_iter=50,FL_pinning=True,Ncore=1):
         """
         Initialize the self-consistent solver.
 
@@ -56,6 +56,7 @@ class FSC:
         self.Qsites_map={}
         self.Qp_in_Q={ii: list(self.Qsites).index(qpidx) for ii,qpidx in enumerate(self.Qprime)}
         
+        self.Ncore=Ncore
         self.convergence_tol = convergence_tol
         self.max_iter = max_iter
         self.log={'ni_error':[1],
@@ -198,8 +199,8 @@ npol_scale=6,**kwarg)
             print("The iteration has been conducted for ", iter_num,"times.")
             print(self.log)
             if save is not None:
-                Uis.append(self.Ui)
-                nis.append(self.ni)
+                Uis.append(self.Ui.copy())
+                nis.append(self.ni.copy())
                 self.save_Uini(Uis,nis,filename=save)
             
             self.local_solver()
@@ -222,7 +223,7 @@ npol_scale=6,**kwarg)
 
 
             if np.abs(self.log['ildos_error'][-1])>self.convergence_tol:
-                self.update_Quantum(system,approx="symmetry",Ncore=20,num_sample=20,**kwarg)
+                self.update_Quantum(system,approx="symmetry",Ncore=self.Ncore,num_sample=40,**kwarg)
                 iter_num[2]+=1
                 continue
             else:

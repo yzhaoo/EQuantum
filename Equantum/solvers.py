@@ -1,13 +1,14 @@
 import numpy as np
 from scipy.interpolate import interp1d
 from scipy.optimize import minimize_scalar
+from joblib import Parallel, delayed
 
-def local_solver_i(idx,ildos,Ci,ni,Ui,limits,cnp):
+def local_solver_i(idx,ildos,Ci,ni,Ui,limits):
     #interpolate the ildos to be a conitnuous function
     x_dis=ildos[0]-Ui
     y_dis=ildos[1]
     ildos_dis=[np.sum(y_dis[:idx]) for idx in range(len(x_dis))]
-    ildos_dis=ildos_dis-cnp
+    #ildos_dis=ildos_dis-cnp
     ildos_iterp=interp1d(x_dis,ildos_dis,kind='linear',fill_value='exptrapolate')
     def dn_for_Ci(dU):
         return dU*Ci+ni
@@ -28,17 +29,23 @@ def local_solver(fsc):
     dUs=np.zeros(len(fsc.Qprime))
     dns=np.zeros(len(fsc.Qprime))
     
-    for ii in range(len(fsc.Qprime)):
-        Uii=fsc.Ui[fsc.Qprime][ii]
-        if fsc.lattice_type=="square":
+    if True:
+        for ii in range(len(fsc.Qprime)):
+            Uii=fsc.Ui[fsc.Qprime][ii]
             elimit=(0-Uii,2*fsc.bandwidth-Uii)
-            charge_cnp= 0 
-        else:
-            elimit=(-Uii-0*fsc.bandwidth,2*fsc.bandwidth-Uii)
-            charge_cnp=0*fsc.max_fill/2
-        dU,dn=local_solver_i(ii,fsc.ildos[fsc.Qp_in_Q[ii]],fsc.Ci[ii],fsc.ni[fsc.Qprime][ii],Uii,elimit,charge_cnp)
-        dUs[ii]=dU
-        dns[ii]=dn
+            dU,dn=local_solver_i(ii,fsc.ildos[fsc.Qp_in_Q[ii]],fsc.Ci[ii],fsc.ni[fsc.Qprime][ii],Uii,elimit)
+            dUs[ii]=dU
+            dns[ii]=dn
+    else:
+        def get_ldos(ii):
+            Uii=fsc.Ui[fsc.Qprime][ii]
+            elimit=(0-Uii,2*fsc.bandwidth-Uii)
+            dU,dn=local_solver_i(ii,fsc.ildos[fsc.Qp_in_Q[ii]],fsc.Ci[ii],fsc.ni[fsc.Qprime][ii],Uii,elimit)
+            return dU,dn
+        dataall=np.array(Parallel(n_jobs=fsc.Ncore)(delayed(get_ldos)(ii) for ii in range(len(fsc.Qprime))))
+        dUs=dataall[:,0,:]
+        dns=dataall[:,1,:]
+
     return [dUs,dns]
 
 def update_Qprime(fsc,tol=0):
