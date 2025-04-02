@@ -118,8 +118,7 @@ class FSC:
         #initialize at the half-filling (since assume U=0 onsite)
         #self.ni[self.Qsites]+=0.5*np.ones(len(self.Qsites))
         #calculate the initial ildos
-        self.ildos=qbuilder.update_ildos(self,system,delta=self.t/20,w=np.linspace(-self.bandwidth,self.bandwidth,int(len(self.Qsites)/2)),
-npol_scale=6,**kwarg)
+        self.ildos=qbuilder.update_ildos(self,system,delta=self.t/20,npol_scale=6,**kwarg)
         print("The quantum problem has been initialized.")
 
 
@@ -132,7 +131,7 @@ npol_scale=6,**kwarg)
     def update_Quantum(self,system,**kwarg):
         pre_ildos=self.ildos.copy()
         qbuilder.update_U(self,system)
-        self.ildos[np.array(list(self.Qp_in_Q.values()))]=qbuilder.update_ildos(self,system,delta=self.t/20,**kwarg)
+        self.ildos[np.array(list(self.Qp_in_Q.values()))]=qbuilder.update_ildos(self,system,delta=self.t/20,npol_scale=6,**kwarg)
         #self.log['ildos_error'].append(np.mean(self.ildos-pre_ildos))
         self.ni[self.Qprime]=qbuilder.get_n_from_ildos(self,self.ildos)
 

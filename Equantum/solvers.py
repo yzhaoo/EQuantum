@@ -29,7 +29,7 @@ def local_solver(fsc):
     dUs=np.zeros(len(fsc.Qprime))
     dns=np.zeros(len(fsc.Qprime))
     
-    if True:
+    if fsc.Ncore==1:
         for ii in range(len(fsc.Qprime)):
             Uii=fsc.Ui[fsc.Qprime][ii]
             elimit=(0-Uii,2*fsc.bandwidth-Uii)
@@ -37,14 +37,21 @@ def local_solver(fsc):
             dUs[ii]=dU
             dns[ii]=dn
     else:
+        Uis=fsc.Ui[fsc.Qprime]
+        Qp_in_Q_map=fsc.Qp_in_Q.copy()
+        ildos_old=fsc.ildos.copy()
+        Cis=fsc.Ci.copy()
+        nis=fsc.ni[fsc.Qprime]
+        bandwidth=fsc.bandwidth
+
         def get_ldos(ii):
-            Uii=fsc.Ui[fsc.Qprime][ii]
-            elimit=(0-Uii,2*fsc.bandwidth-Uii)
-            dU,dn=local_solver_i(ii,fsc.ildos[fsc.Qp_in_Q[ii]],fsc.Ci[ii],fsc.ni[fsc.Qprime][ii],Uii,elimit)
+            Uii=Uis[ii]
+            elimit=(0-Uii,2*bandwidth-Uii)
+            dU,dn=local_solver_i(ii,ildos_old[Qp_in_Q_map[ii]],Cis[ii],nis[ii],Uii,elimit)
             return dU,dn
         dataall=np.array(Parallel(n_jobs=fsc.Ncore)(delayed(get_ldos)(ii) for ii in range(len(fsc.Qprime))))
-        dUs=dataall[:,0,:]
-        dns=dataall[:,1,:]
+        dUs=dataall[:,0]
+        dns=dataall[:,1]
 
     return [dUs,dns]
 

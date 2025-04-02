@@ -14,7 +14,7 @@ import importlib
 import kwant
 from EQsystem import System
 def density_function(z):
-        spacing0 = 0.016 # spacing at r=0
+        spacing0 = 0.008 # spacing at r=0
         k = 0.2  # spacing increases by 0.05 per unit distance
         if abs(z)<3*spacing0:
             return spacing0   #define same lattice for the layers above/beneath quantum system, avoid oscillation due to the lattice mismatch
@@ -32,12 +32,12 @@ geoparams={"lattice_type": "honeycomb",   # or honeycomb_lattice, etc.
 
 syst=System(geoparams,ifqsystem=True,quantum_builder="default")
 
-qparams={'Ufunc': lambda x:0,'phi':0.08}
+qparams={'Ufunc': lambda x:0,'phi':0.04}
 fsc=FSC(syst,ifinitial=False,params=qparams,Ncore=40)
 
-fsc.update_BC(syst,'gate','potential',0.9)
-fsc.update_BC(syst,'backgate','potential',0.7,ifinitial=True)
+fsc.update_BC(syst,'gate','potential',1.3)
+fsc.update_BC(syst,'backgate','potential',0.95,ifinitial=True)
 
 fsc.Ncore=40
 fsc.convergence_tol=1e-6
-fsc.solve(syst,save=datapath+"test")
+fsc.solve(syst,save=datapath+"test0008_02")
