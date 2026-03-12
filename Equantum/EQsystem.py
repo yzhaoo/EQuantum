@@ -41,14 +41,19 @@ class System:
         # Discretize the simulation box
         self.geometry.discretize()
         print("Generated", len(self.geometry.points), "points in 3D.")
+        
         # Optionally compute the Voronoi tessellation if needed later
-        self.geometry.compute_voronoi()
-        print("Voronoi cells have been created.")
+        if config_file is not None or assign_mat:
+            self.geometry.compute_voronoi()
+            print("Voronoi cells have been created.")
         
         # Build Site objects from the geometry points.
         # Here we simply create a Site for each point with default values.
         self.sites = systemfunc.create_sites_from_geometry_3d(self.geometry)
-        self.remove_dangling_site()
+        
+        if config_file is not None or assign_mat:
+            self.remove_dangling_site()
+            
         self.num_sites=len(self.sites)
         self.material_indices={}
         self.Qsites=None

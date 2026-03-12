@@ -194,13 +194,16 @@ class FSC:
         if save is not None:
             Uis=[]
             nis=[]
+            ildoss=[]
+            cut_idx=cut_idx=[qidx for qidx,idx in enumerate(self.Qsites) if np.abs(self.sites[idx].coordinates[0])<0.005 and self.sites[idx].material=='Qsystem']
+            ildoss=self.ildos[cut_idx]
         while True:
             print("The iteration has been conducted for ", iter_num,"times.")
             print(self.log)
             if save is not None:
                 Uis.append(self.Ui.copy())
                 nis.append(self.ni.copy())
-                self.save_Uini(Uis,nis,filename=save)
+                self.save_Uini(Uis,nis,ildoss,filename=save)
             
             self.local_solver()
             self.update_Qprime()
@@ -221,8 +224,10 @@ class FSC:
             self.update_Poisson()   
 
 
-            if np.abs(self.log['ildos_error'][-1])>self.convergence_tol:
-                self.update_Quantum(system,approx="symmetry",Ncore=self.Ncore,num_sample=self.Ncore,**kwarg)
+            # if np.abs(self.log['ildos_error'][-1])>self.convergence_tol:
+            if np.sum(iter_num)< 30:
+                self.update_Quantum(system,approx="symmetry",Ncore=self.Ncore,num_sample=int(5*self.Ncore),**kwarg)
+                ildoss=self.ildos[cut_idx]
                 iter_num[2]+=1
                 continue
             else:
@@ -230,10 +235,11 @@ class FSC:
                 break
             
 
-    def save_Uini(self,Uis,nis,filename):
+    def save_Uini(self,Uis,nis,ildoss,filename):
         mdic={}
         mdic['Uis']=Uis
         mdic['nis']=nis
+        mdic['ildoss']=ildoss
         from scipy.io import savemat
         mat_fname=filename
         savemat(mat_fname,mdic)

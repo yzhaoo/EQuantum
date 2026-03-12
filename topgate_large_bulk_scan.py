@@ -29,15 +29,18 @@ geoparams={"lattice_type": "honeycomb",   # or honeycomb_lattice, etc.
 "quantum_center": (0,0,0)     # optional, defaults to (0,0,0)
               }
 
+Vgrange=np.linspace(0.2,0.4,21)
 
-syst=System(geoparams,ifqsystem=True,quantum_builder="default")
 
-qparams={'Ufunc': lambda x:0,'phi':0.04}
-fsc=FSC(syst,ifinitial=False,params=qparams,Ncore=10)
+for Vg in tqdm(Vgrange):
+    syst=System(geoparams,ifqsystem=True,quantum_builder="default")
 
-fsc.update_BC(syst,'gate','potential',0.4)
-fsc.update_BC(syst,'backgate','potential',0.28,ifinitial=True)
+    qparams={'Ufunc': lambda x:0,'phi':0.04}
+    fsc=FSC(syst,ifinitial=False,params=qparams,Ncore=10)
 
-fsc.Ncore=10
-fsc.convergence_tol=1e-6
-fsc.solve(syst,save=datapath+"test0008_02_graphene_diec_01")
+    fsc.update_BC(syst,'gate','potential',0.4)
+    fsc.update_BC(syst,'backgate','potential',Vg,ifinitial=True)
+
+    fsc.Ncore=10
+    fsc.convergence_tol=1e-6
+    fsc.solve(syst,save=datapath+"test0008_02_graphene_diec_01_Vg_%d" %(Vg*1000))
