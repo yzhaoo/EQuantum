@@ -23,9 +23,14 @@ def kwant_builder(syst):
             return box[0][0]<=x<=box[0][1] and box[1][0]<=y<=box[1][1]
         return ifinshape
     #define the hopping function, the peierls phase is added as a parameter for later calculation
-    def mag_hop(to_site,from_site,phi):
-        x=from_site.pos[0]
-        return syst.t*np.exp(1j*2*np.pi*phi*x)
+    # def mag_hop(to_site,from_site,phi):
+    #     x=from_site.pos[0]
+    #     return syst.t*np.exp(1j*2*np.pi*phi*x)
+    def mag_hop(to_site, from_site, phi):
+        xi, yi = from_site.pos
+        xf, yf = to_site.pos
+        dy = yf - yi
+        return syst.t * np.exp(1j * 2 * np.pi * phi * xi * dy)
     #define the onsite potential, the Ufun is a function that will be defined later
     def onsite_pot(site,Ufunc):
         return Ufunc(site)

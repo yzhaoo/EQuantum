@@ -43,9 +43,8 @@ class QuantumSystem:
         for i, site in enumerate(self.Qsites):
             # Diagonal term: call the onsite function with the site.
             self.H[i, i] = onsite_pot(site, Ufunc) 
-            # Off-diagonal: iterate over neighbors
             for j in site.neighbors:
-                if np.abs(self.all_sites[j].coordinates[2])<1e-8 and self.all_sites[j].material=='Qsystem':
+                if np.abs(self.all_sites[j].coordinates[2]) < 1e-4 and self.all_sites[j].material == 'Qsystem':
                     try:
                         j_idx=self.q_to_Q_map[j]
                     except KeyError:
@@ -177,12 +176,20 @@ class QuantumSystem:
         
 
 def mag_hop_square(t,to_site,from_site,phi,lat_spacing):
-    coord_i=np.array(from_site.coordinates)/lat_spacing
-    coord_f=np.array(to_site.coordinates)/lat_spacing
-    dx=(coord_f[0]- coord_i[0])
-    ydirection=np.sign(coord_f[1]-coord_i[1])
-    nx=coord_i[0]
-    return t*np.exp(1j*2*np.pi*phi*nx*dx*ydirection)
+    coord_i = np.array(from_site.coordinates) / lat_spacing
+    coord_f = np.array(to_site.coordinates) / lat_spacing
+
+    dx = coord_f[0] - coord_i[0]
+    dy = coord_f[1] - coord_i[1]
+    x = coord_i[0]
+
+    return t * np.exp(1j * 2 * np.pi * phi * x * dy)
+    #coord_i=np.array(from_site.coordinates)/lat_spacing
+    #coord_f=np.array(to_site.coordinates)/lat_spacing
+    #dx=(coord_f[0]- coord_i[0])
+    #ydirection=np.sign(coord_f[1]-coord_i[1])
+    #nx=coord_i[0]
+    #return t*np.exp(1j*2*np.pi*phi*nx*ydirection)
 
 def mag_hop_honeycomb(t,to_site,from_site,phi,lat_spacing):
     coord_i=np.array(from_site.coordinates)/lat_spacing

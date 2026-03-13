@@ -156,7 +156,7 @@ def assign_point_to_material(site,params=geo_params):
     z=site.coordinates[2]
 
     if site.material != 'gate':
-        if z==0 and r<=r_qsystem:
+        if np.abs(z)<1e-4 and r<=r_qsystem:
             site.material='Qsystem'
             site.potential=0
             site.BCtype=0

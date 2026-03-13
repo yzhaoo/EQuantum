@@ -243,8 +243,12 @@ def get_dos_i(m,i=0,
     if kpm_scale is None: # if none provided
         scale = estimate_bandwidth(m) # estimate the bandwidth
     else: scale = kpm_scale # given from input
+    
+    if scale < 1e-10:
+        scale = 1e-4  # Fallback to prevent ne=0
+
     npol = int(npol_scale*scale/delta) # number of polynomials
-    ne = npol*10 # scale the number of energies accordingly
+    ne = max(npol*10, 100) # prevent 0 evaluating to empty arrays
     (es,ds) = kpm.ldos(m,i=i,ne=ne,kernel=kernel,kpm_prec=kpm_prec,
             scale=scale,
             npol=npol,**kwargs) # compute the LDOS with KPM
