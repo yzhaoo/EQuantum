@@ -11,7 +11,7 @@ from mpl_toolkits.mplot3d import Axes3D  # needed for 3D plotting
 import matplotlib.cm as cm
 import matplotlib.colors as mcolors
 class FSC:
-    def __init__(self, system, ifinitial=True,params=None,convergence_tol=1e-8, max_iter=50,FL_pinning=True,Ncore=1):
+    def __init__(self, system, ifinitial=True,qparams=None,convergence_tol=1e-8, max_iter=50,FL_pinning=True,Ncore=1):
         """
         Initialize the self-consistent solver.
 
@@ -68,8 +68,8 @@ class FSC:
                 solvers.Fermi_level_pinning(self)
             #initialize Posisson problem
             self.initial_Poisson()
-        if params is not None:
-            self.update_qparams(system,params,ifinitial=False)
+        if qparams is not None:
+            self.update_qparams(system,qparams,ifinitial=False)
             #update the maximal filling for graphene under magnetic field.
             self.max_fill= system.max_fill if self.lattice_type=="square" else self.E_to_n(self.bandwidth,self.qparams['phi'],self.lat_spacing*1e-6)
             #print(self.qparams['phi'],self.lat_spacing,self.bandwidth,self.max_fill,self.E_to_n(self.bandwidth,self.qparams['phi'],self.lat_spacing))
@@ -119,11 +119,13 @@ class FSC:
         #self.ni[self.Qsites]+=0.5*np.ones(len(self.Qsites))
         #calculate the initial ildos
         self.ildos=qbuilder.update_ildos(self,system,delta=self.t/20,npol_scale=6,**kwarg)
+        print("FSC qparams:", self.qparams)
+        print("QSystem params:", self.qsystem.qparams)
         print("The quantum problem has been initialized.")
 
 
-    def update_qparams(self,system,params,ifinitial=True):
-        qbuilder.update_params(self,params)
+    def update_qparams(self,system,qparams,ifinitial=True):
+        qbuilder.update_qparams(self,qparams)
         if ifinitial:
             self.initial_Quantum(system)
 
@@ -309,6 +311,88 @@ class FSC:
         ax.set_ylabel("Y")
         ax.set_title("System Sites")
         ax.legend()
+        plt.show()
+    
+    def plot_Hamiltonian(self, ax=None):
+        """
+        Plot the Hamiltonian of the quantum system in 2D.
+
+        Sites are plotted as dots colored by onsite potential.
+        Hoppings are plotted as lines colored by Re(H_ij).
+        """
+
+        import matplotlib.pyplot as plt
+        import matplotlib.cm as cm
+        import matplotlib.colors as mcolors
+        import numpy as np
+
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(8,8))
+
+        # Hamiltonian
+        H = self.qsystem.get_hamiltonian().tocsr()
+
+        # Qsystem site coordinates
+        coords = np.array([self.sites[idx].coordinates for idx in self.Qsites])
+        xy = coords[:, :2]
+
+        # onsite potential
+        onsite = H.diagonal().real
+
+        # --- plot sites ---
+        norm_sites = mcolors.Normalize(vmin=onsite.min(), vmax=onsite.max())
+        cmap_sites = cm.viridis
+
+        sc = ax.scatter(
+            xy[:,0],
+            xy[:,1],
+            c=onsite,
+            cmap=cmap_sites,
+            s=30,
+            norm=norm_sites,
+            zorder=3
+        )
+
+        cbar = plt.colorbar(sc, ax=ax, pad=0.02)
+        cbar.set_label("Onsite potential")
+
+        # --- extract hoppings ---
+        rows, cols = H.nonzero()
+
+        mask = rows < cols   # avoid double plotting
+        rows = rows[mask]
+        cols = cols[mask]
+
+        hop = H[rows, cols].A1.real
+
+        norm_hop = mcolors.Normalize(vmin=hop.min(), vmax=hop.max())
+        cmap_hop = cm.coolwarm
+
+        # --- plot hopping lines ---
+        for i, j, t in zip(rows, cols, hop):
+
+            x = [xy[i,0], xy[j,0]]
+            y = [xy[i,1], xy[j,1]]
+
+            ax.plot(
+                x,
+                y,
+                color=cmap_hop(norm_hop(t)),
+                linewidth=1.0,
+                alpha=0.8,
+                zorder=1
+            )
+
+        sm = cm.ScalarMappable(norm=norm_hop, cmap=cmap_hop)
+        sm.set_array([])
+        cbar2 = plt.colorbar(sm, ax=ax, pad=0.08)
+        cbar2.set_label("Re(Hopping)")
+
+        ax.set_aspect('equal')
+        ax.set_xlabel("x")
+        ax.set_ylabel("y")
+        ax.set_title("Quantum Hamiltonian")
+
         plt.show()
 
     

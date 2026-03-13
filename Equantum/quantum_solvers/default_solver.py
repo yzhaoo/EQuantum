@@ -7,13 +7,13 @@ from functools import partial
 from .kpm_solver import kpm_dos, kpm_ldos, kpm_dos_many, kpm_dos_from_ldos
 
 class QuantumSystem:
-    def __init__(self, syst, params={'Ufunc': lambda x: 0,'phi':0.}):
+    def __init__(self, syst, qparams={'Ufunc': lambda x: 0,'phi':0.}):
         """
         Initialize the quantum system.
         
         Parameters:
           Qsites: list of site dictionaries.
-          params: dictionary of parameters, for example:
+          qparams: dictionary of parameters, for example:
               {
                   'Ufunc': <callable that takes a site and returns an onsite energy>,
                   'mag_hop': <callable that takes (site_i, site_j, phi) and returns a hopping amplitude>,
@@ -23,7 +23,7 @@ class QuantumSystem:
         self.Qsites = [syst.sites[idx] for idx in syst.Qsites]
         self.q_to_Q_map={qidx:idx for idx, qidx in enumerate(syst.Qsites)}
         self.all_sites=syst.sites
-        self.params = params.copy()  # Store the parameter dictionary
+        self.qparams = qparams.copy()  # Store the parameter dictionary
         self.N = len(self.Qsites)
         self.lattice_type=syst.geometry_params['lattice_type']
         self.lat_spacing=syst.lat_spacing
@@ -32,8 +32,8 @@ class QuantumSystem:
         self.build_hamiltonian()
     
     def build_hamiltonian(self):
-        Ufunc = self.params['Ufunc']  # This is a function we haven't called yet.
-        phi = self.params['phi']
+        Ufunc = self.qparams['Ufunc']  # This is a function we haven't called yet.
+        phi = self.qparams['phi']
         lat_spacing=self.lat_spacing
 
         hop_func= mag_hop_square if self.lattice_type=="square" else mag_hop_honeycomb
@@ -58,29 +58,31 @@ class QuantumSystem:
                     self.H[i, j_idx] = hop_val
                     #self.H[j_idx, i] = hop_val_back
     
-    def update_params(self, new_params):
+    def update_qparams(self, new_qparams):
         """
         Update the parameters (such as Ufunc or phi) and rebuild the Hamiltonian.
         """
-        self.params=new_params
+        self.qparams = {**self.qparams, **new_qparams}
         self.build_hamiltonian()
 
     def update_U(self,fsc):
         def Ufunc(site):
             return -fsc.Ui[site.id]
-        fsc.qparams['Ufunc']=Ufunc
-        self.update_params(fsc.qparams)
+
+        new_qparams = {**self.qparams, "Ufunc": Ufunc}
+        self.update_qparams(new_qparams)
+        fsc.qparams = dict(new_qparams)
     
     def get_hamiltonian(self):
         return self.H.tocsr()
 
-    def get_dos(self, params=None, i=None, w=None, M=512, n_random=10, **kwargs):
+    def get_dos(self, qparams=None, i=None, w=None, M=512, n_random=10, **kwargs):
         """
         DOS / LDOS from KPM.
 
         Parameters
         ----------
-        params : dict or None
+        qparams : dict or None
             Optional updated Hamiltonian parameters.
         i : None, int, or sequence of ints
             - None: total DOS via stochastic KPM
@@ -95,8 +97,8 @@ class QuantumSystem:
         kwargs :
             Forwarded to kpm_solver, e.g. eps=0.05, kernel="jackson", rng=1234
         """
-        if params is not None:
-            self.update_params(params)
+        if qparams is not None:
+            self.update_qparams(qparams)
 
         H = self.get_hamiltonian()
 
@@ -129,11 +131,11 @@ class QuantumSystem:
         avg = np.mean([rho for _, rho in results], axis=0)
         return np.asarray(w, dtype=float), avg
 
-    def get_ldos(self, fsc, params=None, approx="TF", Ncore=0, M=512, n_random=8, **kwargs):
+    def get_ldos(self, fsc, qparams=None, approx="TF", Ncore=0, M=512, n_random=8, **kwargs):
         Erange = np.linspace(-fsc.bandwidth, fsc.bandwidth, int(len(fsc.Qsites) / 2))
 
-        if params is not None:
-            self.update_params(params)
+        if qparams is not None:
+            self.update_qparams(qparams)
 
         if approx == "TF":
             bulk_dos = self.get_dos(w=Erange, M=M, n_random=n_random)
