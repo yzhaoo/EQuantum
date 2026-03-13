@@ -4,6 +4,7 @@ from functools import partial
 from joblib import Parallel, delayed
 from tqdm import tqdm
 from functools import partial
+from .kpm_solver import kpm_dos, kpm_ldos, kpm_dos_many, kpm_dos_from_ldos
 
 class QuantumSystem:
     def __init__(self, syst, params={'Ufunc': lambda x: 0,'phi':0.}):
@@ -73,96 +74,148 @@ class QuantumSystem:
     def get_hamiltonian(self):
         return self.H.tocsr()
 
-    def get_dos(self,params=None,i=None,ntries=10,**kwargs):
-        """(from qtcipy) Return the DOS, averaging over several vectors. default:10"""
+    def get_dos(self, params=None, i=None, w=None, M=512, n_random=10, **kwargs):
+        """
+        DOS / LDOS from KPM.
+
+        Parameters
+        ----------
+        params : dict or None
+            Optional updated Hamiltonian parameters.
+        i : None, int, or sequence of ints
+            - None: total DOS via stochastic KPM
+            - int: LDOS at one site
+            - sequence: average LDOS over selected sites
+        w : array or None
+            Energy grid
+        M : int
+            Number of Chebyshev moments
+        n_random : int
+            Number of random vectors for total DOS
+        kwargs :
+            Forwarded to kpm_solver, e.g. eps=0.05, kernel="jackson", rng=1234
+        """
         if params is not None:
             self.update_params(params)
-        m=self.H.toarray()
-        o = []
-        d0 = 0.
-        if i is None: i = [ii for ii in range(m.shape[0])]
-        for j in range(ntries):
-            e,d = get_dos_i(m,i=i,**kwargs)
-            d0 = d0 + d
-        d0=d0/np.sum(d0)
-        return e,d0 #/ntries
 
-    def get_ldos(self,fsc,params=None,approx="TF",Ncore=0,**kwargs):
-        Erange=np.linspace(-fsc.bandwidth,fsc.bandwidth,int(len(fsc.Qsites)/2))
-        if approx=="TF":
-            bulk_dos= self.get_dos(w=Erange,**kwargs)
-            
-            dataall=[bulk_dos for _ in range(len(self.Qsites))]
-        elif approx=="symmetry":
+        H = self.get_hamiltonian()
 
-            dataall=self.sample_ldos(fsc,Ncore=Ncore,**kwargs)
+        if i is None:
+            return kpm_dos(
+                H,
+                energies=w,
+                num_moments=M,
+                num_vectors=n_random,
+                **kwargs,
+            )
+
+        if np.isscalar(i):
+            return kpm_ldos(
+                H,
+                site_index=int(i),
+                energies=w,
+                num_moments=M,
+                **kwargs,
+            )
+
+        site_indices = [int(ii) for ii in i]
+        results = kpm_dos_many(
+            H,
+            site_indices=site_indices,
+            energies=w,
+            num_moments=M,
+            **kwargs,
+        )
+        avg = np.mean([rho for _, rho in results], axis=0)
+        return np.asarray(w, dtype=float), avg
+
+    def get_ldos(self, fsc, params=None, approx="TF", Ncore=0, M=512, n_random=8, **kwargs):
+        Erange = np.linspace(-fsc.bandwidth, fsc.bandwidth, int(len(fsc.Qsites) / 2))
+
+        if params is not None:
+            self.update_params(params)
+
+        if approx == "TF":
+            bulk_dos = self.get_dos(w=Erange, M=M, n_random=n_random)
+            dataall = [bulk_dos for _ in range(len(self.Qsites))]
+
+        elif approx == "symmetry":
+            dataall = self.sample_ldos(fsc, Ncore=Ncore, M=M, **kwargs)
 
         else:
-            if Ncore>1:
-                dataall=Parallel(n_jobs=Ncore)(delayed(self.get_dos)(i=ii,w=Erange-fsc.Ui[fsc.Qsites][ii],**kwargs) for ii in range(len(self.Qsites)))
+            H = self.get_hamiltonian()
+
+            if Ncore > 1:
+                dataall = Parallel(n_jobs=Ncore)(
+                    delayed(kpm_ldos)(
+                        H,
+                        site_index=ii,
+                        energies=Erange - fsc.Ui[fsc.Qsites][ii],
+                        M=M
+                    )
+                    for ii in range(len(self.Qsites))
+                )
             else:
-                dataall=[]
+                dataall = []
                 for ii in tqdm(range(len(self.Qsites))):
-                    datai=self.get_dos(i=ii,w=Erange-fsc.Ui[fsc.Qsites][ii],**kwargs)
+                    datai = kpm_ldos(
+                        H,
+                        site_index=ii,
+                        energies=Erange - fsc.Ui[fsc.Qsites][ii],
+                        M=M
+                    )
                     dataall.append(datai)
-        return np.array(dataall)
 
-    def sample_ldos(self,fsc,eometry="disk",num_sample=10,Ncore=1,**kwargs):
-        """
-        sample the ldos along the radius, interpolate the obtain results.
+        return np.array(dataall, dtype=object)
 
-        """
-        Erange=np.linspace(-fsc.bandwidth,fsc.bandwidth,int(len(fsc.Qsites)/2))
-        center = np.array([0.,0.,0.])
-        site_radii=[]
-        Qpsites=[fsc.sites[idx] for idx in fsc.Qprime]
-        # Compute radial distances for each site (x-y plane)
-        for site in Qpsites:
-            coord = np.array(site.coordinates)
-            # Compute radial distance in x-y plane relative to center
-            r = np.linalg.norm(coord[:2] - center[:2])
-            site_radii.append(r)
-        
-        # Gather all radial distances.
-        site_radii = np.array(site_radii)
-        
-        # Define radial bins (n+1 bin edges for n bins)
-        r_min, r_max = site_radii.min(), site_radii.max()
-        bins = np.linspace(r_min, r_max, num_sample + 1)
-        
-        # Prepare an array to store LDOS values for each bin.
-        
-        site_in_b=np.array([np.where((site_radii >= bins[b]) & (site_radii < bins[b+1]))[0] for b in range(num_sample)],dtype=object)
-        site_in_b[-1]=np.append(site_in_b[-1],np.where((site_radii>=bins[num_sample]))[0])
+def sample_ldos(self, fsc, eometry="disk", num_sample=10, Ncore=1, M=512, **kwargs):
+    Erange = np.linspace(-fsc.bandwidth, fsc.bandwidth, int(len(fsc.Qsites) / 2))
+    center = np.array([0., 0., 0.])
+    site_radii = []
+    Qpsites = [fsc.sites[idx] for idx in fsc.Qprime]
 
-        Uis=fsc.Ui[fsc.Qsites]
-        Qp_in_Q_map=fsc.Qp_in_Q.copy()
-        H_local = self.H  # assuming self.H is a sparse matrix that is pickleable
-        update_params = self.update_params  # might need to be unbound or a top-level function if issues arise
+    for site in Qpsites:
+        coord = np.array(site.coordinates)
+        r = np.linalg.norm(coord[:2] - center[:2])
+        site_radii.append(r)
 
-        dos_func=partial(get_dos_wrapper,H_local,update_params)
+    site_radii = np.array(site_radii)
+    r_min, r_max = site_radii.min(), site_radii.max()
+    bins = np.linspace(r_min, r_max, num_sample + 1)
 
-        def calculate_ldos_in_bin(bidx,**kwargs):
-            indices=site_in_b[bidx]
-            rep_site = indices[int(len(indices)/2)]
-            ldos_value = np.array(dos_func(i=Qp_in_Q_map[rep_site],
-                                            w=Erange-Uis[Qp_in_Q_map[rep_site]],**kwargs))
-            ldos_value[0,:]+=Uis[Qp_in_Q_map[rep_site]]
-            return ldos_value
+    site_in_b = np.array(
+        [np.where((site_radii >= bins[b]) & (site_radii < bins[b + 1]))[0] for b in range(num_sample)],
+        dtype=object
+    )
+    site_in_b[-1] = np.append(site_in_b[-1], np.where(site_radii >= bins[num_sample])[0])
 
-        if Ncore>1:
-            bin_ldos=Parallel(n_jobs=Ncore)(delayed(calculate_ldos_in_bin)(bidx,**kwargs) for bidx in range(num_sample))
-        else:
-            bin_ldos = []
-            for b in range(num_sample):
-                bin_ldos.append(calculate_ldos_in_bin(b,**kwargs))
-        
-        # Assign the computed LDOS to all sites in the bin.
-        dataall=[]
-        for bidx in range(num_sample):
-            dataall.append(np.array([bin_ldos[bidx] for _ in range(len(site_in_b[bidx]))]))
-        sortidx=np.argsort(np.concatenate([(site_in_b[bidx]) for bidx in range(num_sample)]))
-        return np.concatenate(dataall)[sortidx]
+    Uis = fsc.Ui[fsc.Qsites]
+    Qp_in_Q_map = fsc.Qp_in_Q.copy()
+    H = self.get_hamiltonian()
+
+    def calculate_ldos_in_bin(bidx):
+        indices = site_in_b[bidx]
+        rep_site = indices[int(len(indices) / 2)]
+        qidx = Qp_in_Q_map[rep_site]
+
+        energies = Erange - Uis[qidx]
+        E, rho = kpm_ldos(H, site_index=qidx, energies=energies, M=M)
+        E = E + Uis[qidx]
+        return np.array([E, rho])
+
+    if Ncore > 1:
+        bin_ldos = Parallel(n_jobs=Ncore)(
+            delayed(calculate_ldos_in_bin)(bidx) for bidx in range(num_sample)
+        )
+    else:
+        bin_ldos = [calculate_ldos_in_bin(b) for b in range(num_sample)]
+
+    dataall = []
+    for bidx in range(num_sample):
+        dataall.append(np.array([bin_ldos[bidx] for _ in range(len(site_in_b[bidx]))]))
+
+    sortidx = np.argsort(np.concatenate([site_in_b[bidx] for bidx in range(num_sample)]))
+    return np.concatenate(dataall)[sortidx]
 
 
         
@@ -205,22 +258,3 @@ def mag_hop_honeycomb(t,to_site,from_site,phi,lat_spacing):
 def onsite_pot(site,Ufunc):
         return Ufunc(site)
 
-def get_dos_i(H,w=None,**kwargs):
-    """DOS in one site"""
-    from kpmrho import get_dos_i
-    if w is None: w = np.linspace(-5.,5.,1000)
-    return get_dos_i(H,x=w,**kwargs)
-
-def get_dos_wrapper(H, update_params, i=None, w=None, ntries=10, **kwargs):
-    # Call update_params if needed:
-    if kwargs.get("params") is not None:
-        update_params(kwargs["params"])
-    m = H.toarray()
-    d0 = 0.0
-    if i is None:
-        i = list(range(m.shape[0]))
-    for _ in range(ntries):
-        e, d = get_dos_i(m, i=i, w=w, **kwargs)
-        d0 += d
-    d0 = d0 / np.sum(d0)
-    return e, d0
