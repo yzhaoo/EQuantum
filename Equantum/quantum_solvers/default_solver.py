@@ -5,6 +5,7 @@ from joblib import Parallel, delayed
 from tqdm import tqdm
 from functools import partial
 from .kpm_solver import kpm_dos, kpm_ldos, kpm_dos_many, kpm_dos_from_ldos
+from sklearn.cluster import KMeans
 
 class QuantumSystem:
     def __init__(self, syst, qparams={'Ufunc': lambda x: 0,'phi':0.}):
@@ -57,6 +58,26 @@ class QuantumSystem:
                     #hop_val_back=hop_func(self.t, neighbor,site, phi,lat_spacing)
                     self.H[i, j_idx] = hop_val
                     #self.H[j_idx, i] = hop_val_back
+    def get_energy_bounds(self, margin=0.05):
+        """
+        Estimate spectral bounds of the Hamiltonian.
+        """
+        import scipy.sparse.linalg as spla
+
+        H = self.get_hamiltonian()
+
+        try:
+            emax = spla.eigsh(H, k=1, which="LA", return_eigenvectors=False)[0]
+            emin = spla.eigsh(H, k=1, which="SA", return_eigenvectors=False)[0]
+        except Exception:
+            abs_rowsum = np.abs(H).sum(axis=1).A.ravel()
+            bound = abs_rowsum.max()
+            emin, emax = -bound, bound
+
+        width = emax - emin
+        pad = margin * width
+
+        return emin - pad, emax + pad
     
     def update_qparams(self, new_qparams):
         """
@@ -132,7 +153,8 @@ class QuantumSystem:
         return np.asarray(w, dtype=float), avg
 
     def get_ldos(self, fsc, qparams=None, approx="TF", Ncore=0, M=512, n_random=8, **kwargs):
-        Erange = np.linspace(-fsc.bandwidth, fsc.bandwidth, int(len(fsc.Qsites) / 2))
+        emin, emax = self.get_energy_bounds()
+        Erange = np.linspace(emin, emax, int(len(self.Qsites) / 2))
 
         if qparams is not None:
             self.update_qparams(qparams)
@@ -153,7 +175,7 @@ class QuantumSystem:
                         H,
                         site_index=ii,
                         energies=Erange - fsc.Ui[fsc.Qsites][ii],
-                        M=M
+                        num_moments=M
                     )
                     for ii in range(len(self.Qsites))
                 )
@@ -164,60 +186,77 @@ class QuantumSystem:
                         H,
                         site_index=ii,
                         energies=Erange - fsc.Ui[fsc.Qsites][ii],
-                        M=M
+                        num_moments=M
                     )
                     dataall.append(datai)
 
         return np.array(dataall, dtype=object)
 
-def sample_ldos(self, fsc, eometry="disk", num_sample=10, Ncore=1, M=512, **kwargs):
-    Erange = np.linspace(-fsc.bandwidth, fsc.bandwidth, int(len(fsc.Qsites) / 2))
-    center = np.array([0., 0., 0.])
-    site_radii = []
-    Qpsites = [fsc.sites[idx] for idx in fsc.Qprime]
+    def sample_ldos(self, fsc, num_sample=20, Ncore=1, M=512, **kwargs):
 
-    for site in Qpsites:
-        coord = np.array(site.coordinates)
-        r = np.linalg.norm(coord[:2] - center[:2])
-        site_radii.append(r)
 
-    site_radii = np.array(site_radii)
-    r_min, r_max = site_radii.min(), site_radii.max()
-    bins = np.linspace(r_min, r_max, num_sample + 1)
+        emin, emax = self.get_energy_bounds()
+        Erange = np.linspace(emin, emax, int(len(self.Qsites)/2))
 
-    site_in_b = np.array(
-        [np.where((site_radii >= bins[b]) & (site_radii < bins[b + 1]))[0] for b in range(num_sample)],
-        dtype=object
-    )
-    site_in_b[-1] = np.append(site_in_b[-1], np.where(site_radii >= bins[num_sample])[0])
+        coords = np.array([fsc.sites[idx].coordinates[:2] for idx in fsc.Qprime])
 
-    Uis = fsc.Ui[fsc.Qsites]
-    Qp_in_Q_map = fsc.Qp_in_Q.copy()
-    H = self.get_hamiltonian()
+        num_sample = min(num_sample, len(coords))
 
-    def calculate_ldos_in_bin(bidx):
-        indices = site_in_b[bidx]
-        rep_site = indices[int(len(indices) / 2)]
-        qidx = Qp_in_Q_map[rep_site]
+        kmeans = KMeans(n_clusters=num_sample, n_init=10)
+        labels = kmeans.fit_predict(coords)
 
-        energies = Erange - Uis[qidx]
-        E, rho = kpm_ldos(H, site_index=qidx, energies=energies, M=M)
-        E = E + Uis[qidx]
-        return np.array([E, rho])
+        site_in_b = []
 
-    if Ncore > 1:
-        bin_ldos = Parallel(n_jobs=Ncore)(
-            delayed(calculate_ldos_in_bin)(bidx) for bidx in range(num_sample)
-        )
-    else:
-        bin_ldos = [calculate_ldos_in_bin(b) for b in range(num_sample)]
+        for k in range(num_sample):
+            idx = np.where(labels == k)[0]
+            if len(idx) > 0:
+                site_in_b.append(idx)
 
-    dataall = []
-    for bidx in range(num_sample):
-        dataall.append(np.array([bin_ldos[bidx] for _ in range(len(site_in_b[bidx]))]))
+        Uis = fsc.Ui[fsc.Qsites]
+        Qp_in_Q_map = fsc.Qp_in_Q.copy()
+        H = self.get_hamiltonian()
 
-    sortidx = np.argsort(np.concatenate([site_in_b[bidx] for bidx in range(num_sample)]))
-    return np.concatenate(dataall)[sortidx]
+        def calculate_ldos(indices):
+
+            rep_site = indices[len(indices)//2]
+            qidx = Qp_in_Q_map[rep_site]
+
+            energies = Erange - Uis[qidx]
+
+            E, rho = kpm_ldos(
+                H,
+                site_index=qidx,
+                energies=energies,
+                num_moments=M,
+                **kwargs
+            )
+
+            E = E + Uis[qidx]
+
+            return np.array([E, rho])
+
+        if Ncore > 1:
+
+            bin_ldos = Parallel(n_jobs=Ncore)(
+                delayed(calculate_ldos)(indices)
+                for indices in site_in_b
+            )
+
+        else:
+
+            bin_ldos = [calculate_ldos(indices) for indices in site_in_b]
+
+        dataall = []
+
+        for bidx, indices in enumerate(site_in_b):
+
+            dataall.append(
+                np.array([bin_ldos[bidx] for _ in range(len(indices))])
+            )
+
+        sortidx = np.argsort(np.concatenate(site_in_b))
+
+        return np.concatenate(dataall)[sortidx]
 
 
         

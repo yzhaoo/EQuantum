@@ -4,6 +4,7 @@ import qbuilder as qbuilder
 import numpy as np
 import solvers as solvers
 import scipy.constants as sc
+import scipy.sparse.linalg as spla
 
 import scipy.io as sio
 import matplotlib.pyplot as plt
@@ -39,7 +40,7 @@ class FSC:
         self.unit_cell_area=system.unit_cell_area
         self.unit_cell_area_real=system.unit_cell_area_real
         self.max_fill=system.max_fill
-        self.bandwidth= 3.9 *self.t if self.lattice_type=="square" else 2.9*self.t
+        self.energy_bounds = None
         
         #initialize with Poisson solver parameters
         self.Ci=None
@@ -71,7 +72,9 @@ class FSC:
         if qparams is not None:
             self.update_qparams(system,qparams,ifinitial=False)
             #update the maximal filling for graphene under magnetic field.
-            self.max_fill= system.max_fill if self.lattice_type=="square" else self.E_to_n(self.bandwidth,self.qparams['phi'],self.lat_spacing*1e-6)
+            emin, emax = self.get_energy_bounds()
+            bandwidth = max(abs(emin), abs(emax))
+            self.max_fill = system.max_fill if self.lattice_type=="square" else self.E_to_n(bandwidth, self.qparams['phi'], self.lat_spacing*1e-6)
             #print(self.qparams['phi'],self.lat_spacing,self.bandwidth,self.max_fill,self.E_to_n(self.bandwidth,self.qparams['phi'],self.lat_spacing))
         #initialize Quantum problem
         self.initial_Quantum(system)
@@ -85,6 +88,29 @@ class FSC:
         """
         #the carrier density will scale with the chosen lattice spacing. Here the present carrier densiyt is the one after scaling.
         return (4*ee**2/(3*np.pi)+4*phi/np.sqrt(3))/(3* a **2)/1e16
+def get_energy_bounds(self, margin=0.05):
+    """
+    Estimate spectral bounds of the quantum Hamiltonian.
+    """
+
+    H = self.qsystem.get_hamiltonian()
+
+    try:
+        emax = spla.eigsh(H, k=1, which="LA", return_eigenvectors=False)[0]
+        emin = spla.eigsh(H, k=1, which="SA", return_eigenvectors=False)[0]
+    except Exception:
+        # fallback Gershgorin bound
+        abs_rowsum = np.abs(H).sum(axis=1).A.ravel()
+        bound = abs_rowsum.max()
+        emin, emax = -bound, bound
+
+    width = emax - emin
+    pad = margin * width
+
+    bounds = (emin - pad, emax + pad)
+    self.energy_bounds = bounds
+
+    return bounds
     
     def initial_Poisson(self):
         """
