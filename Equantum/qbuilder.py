@@ -100,15 +100,11 @@ def update_ildos(fsc, syst, **kwargs):
         return ksolver.kwant_ildos_kpm(fsc, **kwargs)
 
     elif builder == "default":
-        cnp = fsc.bandwidth
-
         dataall = fsc.qsystem.get_ldos(fsc, **kwargs)
 
         # rescale the filling according to the maximal carrier density
         dataall[:, 1, :] *= fsc.max_fill
 
-        # shift energy so spectrum starts from 0 in the square-lattice convention
-        dataall[:, 0, :] += cnp
         return dataall
 
     else:

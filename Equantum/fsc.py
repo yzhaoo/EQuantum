@@ -88,29 +88,29 @@ class FSC:
         """
         #the carrier density will scale with the chosen lattice spacing. Here the present carrier densiyt is the one after scaling.
         return (4*ee**2/(3*np.pi)+4*phi/np.sqrt(3))/(3* a **2)/1e16
-def get_energy_bounds(self, margin=0.05):
-    """
-    Estimate spectral bounds of the quantum Hamiltonian.
-    """
+    def get_energy_bounds(self, margin=0.05):
+        """
+        Estimate spectral bounds of the quantum Hamiltonian.
+        """
 
-    H = self.qsystem.get_hamiltonian()
+        H = self.qsystem.get_hamiltonian()
 
-    try:
-        emax = spla.eigsh(H, k=1, which="LA", return_eigenvectors=False)[0]
-        emin = spla.eigsh(H, k=1, which="SA", return_eigenvectors=False)[0]
-    except Exception:
-        # fallback Gershgorin bound
-        abs_rowsum = np.abs(H).sum(axis=1).A.ravel()
-        bound = abs_rowsum.max()
-        emin, emax = -bound, bound
+        try:
+            emax = spla.eigsh(H, k=1, which="LA", return_eigenvectors=False)[0]
+            emin = spla.eigsh(H, k=1, which="SA", return_eigenvectors=False)[0]
+        except Exception:
+            # fallback Gershgorin bound
+            abs_rowsum = np.abs(H).sum(axis=1).A.ravel()
+            bound = abs_rowsum.max()
+            emin, emax = -bound, bound
 
-    width = emax - emin
-    pad = margin * width
+        width = emax - emin
+        pad = margin * width
 
-    bounds = (emin - pad, emax + pad)
-    self.energy_bounds = bounds
+        bounds = (emin - pad, emax + pad)
+        self.energy_bounds = bounds
 
-    return bounds
+        return bounds
     
     def initial_Poisson(self):
         """

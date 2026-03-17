@@ -192,21 +192,40 @@ class QuantumSystem:
 
         return np.array(dataall, dtype=object)
 
-    def sample_ldos(self, fsc, num_sample=20, Ncore=1, M=512, **kwargs):
-
+    def sample_ldos(self, fsc, num_sample=20, Ncore=1, M=512, u_weight=2.0,return_groups=False, **kwargs):
+        from sklearn.cluster import KMeans
+        import numpy as np
 
         emin, emax = self.get_energy_bounds()
-        Erange = np.linspace(emin, emax, int(len(self.Qsites)/2))
+        Erange = np.linspace(emin, emax, int(len(self.Qsites) / 2))
 
-        coords = np.array([fsc.sites[idx].coordinates[:2] for idx in fsc.Qprime])
+        qprime_ids = list(fsc.Qprime)
+        coords = np.array([fsc.sites[idx].coordinates[:2] for idx in qprime_ids])
+        Uvals = np.array([fsc.Ui[idx] for idx in qprime_ids])
 
         num_sample = min(num_sample, len(coords))
 
+        # standardize features
+        x = coords[:, 0]
+        y = coords[:, 1]
+        u = Uvals.copy()
+
+        def safe_standardize(arr):
+            s = arr.std()
+            if s < 1e-14:
+                return np.zeros_like(arr)
+            return (arr - arr.mean()) / s
+
+        xz = safe_standardize(x)
+        yz = safe_standardize(y)
+        uz = safe_standardize(u) * u_weight
+
+        features = np.column_stack([xz, yz, uz])
+
         kmeans = KMeans(n_clusters=num_sample, n_init=10)
-        labels = kmeans.fit_predict(coords)
+        labels = kmeans.fit_predict(features)
 
         site_in_b = []
-
         for k in range(num_sample):
             idx = np.where(labels == k)[0]
             if len(idx) > 0:
@@ -217,10 +236,13 @@ class QuantumSystem:
         H = self.get_hamiltonian()
 
         def calculate_ldos(indices):
+            # choose representative site closest to cluster center in feature space
+            cluster_features = features[indices]
+            center = cluster_features.mean(axis=0)
+            local_idx = np.argmin(np.linalg.norm(cluster_features - center, axis=1))
+            rep_site = indices[local_idx]
 
-            rep_site = indices[len(indices)//2]
             qidx = Qp_in_Q_map[rep_site]
-
             energies = Erange - Uis[qidx]
 
             E, rho = kpm_ldos(
@@ -232,31 +254,40 @@ class QuantumSystem:
             )
 
             E = E + Uis[qidx]
-
             return np.array([E, rho])
 
         if Ncore > 1:
-
             bin_ldos = Parallel(n_jobs=Ncore)(
-                delayed(calculate_ldos)(indices)
-                for indices in site_in_b
+                delayed(calculate_ldos)(indices) for indices in site_in_b
             )
-
         else:
-
             bin_ldos = [calculate_ldos(indices) for indices in site_in_b]
 
         dataall = []
-
         for bidx, indices in enumerate(site_in_b):
-
-            dataall.append(
-                np.array([bin_ldos[bidx] for _ in range(len(indices))])
-            )
+            dataall.append(np.array([bin_ldos[bidx] for _ in range(len(indices))]))
 
         sortidx = np.argsort(np.concatenate(site_in_b))
+        ldos_out = np.concatenate(dataall)[sortidx]
 
-        return np.concatenate(dataall)[sortidx]
+        if return_groups:
+            rep_sites = []
+            for indices in site_in_b:
+                cluster_features = features[indices]
+                center = cluster_features.mean(axis=0)
+                local_idx = np.argmin(np.linalg.norm(cluster_features - center, axis=1))
+                rep_sites.append(indices[local_idx])
+
+            group_info = {
+                "labels": labels,
+                "site_in_b": site_in_b,
+                "rep_sites": np.array(rep_sites, dtype=int),
+                "coords": coords,
+            }
+            return ldos_out, group_info
+
+        return ldos_out
+    
 
 
         
