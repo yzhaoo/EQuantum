@@ -163,7 +163,7 @@ class QuantumSystem:
             bulk_dos = self.get_dos(w=Erange, M=M, n_random=n_random)
             dataall = [bulk_dos for _ in range(len(self.Qsites))]
 
-        elif approx == "symmetry":
+        elif approx == "kmeanssample":
             dataall = self.sample_ldos(fsc, Ncore=Ncore, M=M, **kwargs)
 
         else:

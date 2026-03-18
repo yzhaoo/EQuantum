@@ -110,23 +110,51 @@ def solve(A,F, solver="scipy"):
     """
     return solver_func(A, F)
 
-def solve_capacitance(fsc,**kwargs):
-    N_sites_num=len(fsc.N_indices)
-    D_sites_num=len(fsc.D_indices)
+# def solve_capacitance(fsc,**kwargs):
+#     N_sites_num=len(fsc.N_indices)
+#     D_sites_num=len(fsc.D_indices)
+#     n_N = np.zeros(N_sites_num)
+#     U_D = np.zeros(fsc.num_sites)
+    
+#     common_indices_D = list(set(fsc.Qprime).intersection(fsc.D_indices))
+#     where_Qp_in_D=[list(fsc.D_indices).index(x) for x in fsc.Qprime]
+
+#     # for Nidx,idx in enumerate(common_indices_N):
+#     #     n_N[Nidx]=fsc.sites[idx].charge
+#     for idx in common_indices_D:
+#         U_D[idx]= 1.
+#     U_D=U_D[fsc.D_indices]
+#     sol= solve(fsc.A_mixed,assemble_input(fsc,n_N,U_D),**kwargs)
+#     Cij=sol[-D_sites_num:][np.array(where_Qp_in_D)]
+
+#     return Cij
+def solve_capacitance(fsc, **kwargs):
+    N_sites_num = len(fsc.N_indices)
+    D_sites_num = len(fsc.D_indices)
+
+    if len(fsc.Qprime) == 0:
+        raise RuntimeError("Qprime is empty: the active quantum region vanished.")
+
+    missing = [x for x in fsc.Qprime if x not in fsc.D_indices]
+    if missing:
+        raise RuntimeError(
+            "Qprime is not a subset of D_indices. "
+            f"{len(missing)} sites missing, first few: {missing[:10]}"
+        )
+
     n_N = np.zeros(N_sites_num)
     U_D = np.zeros(fsc.num_sites)
-    
-    common_indices_D = list(set(fsc.Qprime).intersection(fsc.D_indices))
-    where_Qp_in_D=[list(fsc.D_indices).index(x) for x in fsc.Qprime]
 
-    # for Nidx,idx in enumerate(common_indices_N):
-    #     n_N[Nidx]=fsc.sites[idx].charge
-    for idx in common_indices_D:
-        U_D[idx]= 1.
-    U_D=U_D[fsc.D_indices]
-    sol= solve(fsc.A_mixed,assemble_input(fsc,n_N,U_D),**kwargs)
-    Cij=sol[-D_sites_num:][np.array(where_Qp_in_D)]
+    D_list = list(fsc.D_indices)
+    where_Qp_in_D = np.array([D_list.index(x) for x in fsc.Qprime], dtype=int)
 
+    for idx in fsc.Qprime:
+        U_D[idx] = 1.0
+
+    U_D = U_D[fsc.D_indices]
+    sol = solve(fsc.A_mixed, assemble_input(fsc, n_N, U_D), **kwargs)
+
+    Cij = sol[-D_sites_num:][where_Qp_in_D]
     return Cij
 
 def solve_NDpoisson(fsc,**kwargs):

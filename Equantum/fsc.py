@@ -5,12 +5,15 @@ import numpy as np
 import solvers as solvers
 import scipy.constants as sc
 import scipy.sparse.linalg as spla
+import time
 
 import scipy.io as sio
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D  # needed for 3D plotting
 import matplotlib.cm as cm
 import matplotlib.colors as mcolors
+from IPython.display import clear_output
+
 class FSC:
     def __init__(self, system, ifinitial=True,qparams=None,convergence_tol=1e-8, max_iter=50,FL_pinning=True,Ncore=1):
         """
@@ -60,9 +63,19 @@ class FSC:
         self.Ncore=Ncore
         self.convergence_tol = convergence_tol
         self.max_iter = max_iter
-        self.log={'ni_error':[1],
-        'Qprime_len':[len(self.Qprime)],
-        'ildos_error':[1]}
+        self.log = {
+            "Qprime_len": [len(self.Qprime)],
+            "Ui_maxdiff": [],
+            "Ui_l2diff": [],
+            "ni_maxdiff": [],
+            "ni_l2diff": [],
+            "ildos_maxdiff": [],
+            "timing_poisson": [],
+            "timing_quantum": [],
+            "timing_total": [],
+        }
+        self.snapshots = {}
+        self.dashboard_sites = None
 
         if ifinitial:
             if FL_pinning:
@@ -125,11 +138,21 @@ class FSC:
 
     def update_Poisson(self):
         #solve the initial ND poisson problem and update ni, Ui
-        pre_ni=self.ni.copy()
-        UnnD=psolver.solve_NDpoisson(self)
-        self.ni[self.D_indices]=UnnD[-len(self.D_indices):]
-        self.log['ni_error'].append(np.mean(pre_ni-self.ni))
-        self.Ui[self.N_indices]=UnnD[:len(self.N_indices)]
+        pre_ni = self.ni.copy()
+        pre_Ui = self.Ui.copy()
+
+        UnnD = psolver.solve_NDpoisson(self)
+
+        self.ni[self.D_indices] = UnnD[-len(self.D_indices):]
+        self.Ui[self.N_indices] = UnnD[:len(self.N_indices)]
+
+        dni = self.ni - pre_ni
+        dUi = self.Ui - pre_Ui
+
+        self.log["ni_maxdiff"].append(np.max(np.abs(dni)))
+        self.log["ni_l2diff"].append(np.linalg.norm(dni))
+        self.log["Ui_maxdiff"].append(np.max(np.abs(dUi)))
+        self.log["Ui_l2diff"].append(np.linalg.norm(dUi))
         
 
     def initial_Quantum(self,system,**kwarg):
@@ -144,7 +167,15 @@ class FSC:
         #initialize at the half-filling (since assume U=0 onsite)
         #self.ni[self.Qsites]+=0.5*np.ones(len(self.Qsites))
         #calculate the initial ildos
-        self.ildos=qbuilder.update_ildos(self,system,delta=self.t/20,npol_scale=6,**kwarg)
+        self.ildos = qbuilder.update_ildos(
+            self,
+            system,
+            M=256,
+            eps=0.05,
+            kernel="jackson",
+            **kwarg
+        )
+        self.init_dashboard_sites()
         print("FSC qparams:", self.qparams)
         print("QSystem params:", self.qsystem.qparams)
         print("The quantum problem has been initialized.")
@@ -156,12 +187,18 @@ class FSC:
             self.initial_Quantum(system)
 
 
-    def update_Quantum(self,system,**kwarg):
-        pre_ildos=self.ildos.copy()
-        qbuilder.update_U(self,system)
-        self.ildos[np.array(list(self.Qp_in_Q.values()))]=qbuilder.update_ildos(self,system,delta=self.t/20,npol_scale=6,**kwarg)
-        #self.log['ildos_error'].append(np.mean(self.ildos-pre_ildos))
-        self.ni[self.Qprime]=qbuilder.get_n_from_ildos(self,self.ildos)
+    def update_Quantum(self, system, **kwarg):
+        pre_ildos = self.ildos.copy()
+        qbuilder.update_U(self, system)
+
+        self.ildos[np.array(list(self.Qp_in_Q.values()))] = qbuilder.update_ildos(
+            self, system, **kwarg
+        )
+
+        dildos = self.ildos - pre_ildos
+        self.log["ildos_maxdiff"].append(np.max(np.abs(dildos)))
+
+        self.ni[self.Qprime] = qbuilder.get_n_from_ildos(self, self.ildos)
 
 
 
@@ -184,83 +221,249 @@ class FSC:
             #initialize Quantum problem
 
 
-    def update_Qprime(self,tol=1e-7):
-        Qprime_new=solvers.update_Qprime(self,tol)
-        self.log['Qprime_len'].append(len(Qprime_new))
-        Qprime_his=self.log['Qprime_len']
-        self.Qprime=Qprime_new
-        if Qprime_his[-1]!=Qprime_his[-2]:
+    def update_Qprime(self, tol=1e-7):
+        Qprime_old = self.Qprime.copy()
+        Qprime_new = solvers.update_Qprime(self, tol)
+        self.Qprime = Qprime_new
+
+        if len(Qprime_new) != len(Qprime_old):
             psolver.calculate_delta(self)
             self.update_Poisson()
-            self.Ci=psolver.solve_capacitance(self)
-        self.Qp_in_Q={ii: list(self.Qsites).index(qpidx) for ii,qpidx in enumerate(self.Qprime)}
-        #print(self.log['Qprime_len'])
-        #print(len(Qprime_new))
+            self.Ci = psolver.solve_capacitance(self)
+
+        self.Qp_in_Q = {ii: list(self.Qsites).index(qpidx) for ii, qpidx in enumerate(self.Qprime)}
         
 
+    def solve(
+        self,
+        system,
+        save=None,
+        dashboard_every=5,
+        snapshot_every=5,
+        max_total_iter=30,
+        show_dashboard=False,
+        **kwarg
+    ):
+        """
+        Run the self-consistent iteration loop until convergence or max iterations.
 
-    def solve(self,system,save=None,**kwarg):
+        Parameters
+        ----------
+        system : object
+            Underlying system object.
+        save : str or None
+            Optional filename for saving history.
+        dashboard_every : int
+            Plot dashboard every N iterations if show_dashboard=True.
+        snapshot_every : int
+            Save internal snapshots every N iterations.
+        max_total_iter : int
+            Hard cap on total FSC iterations.
+        show_dashboard : bool
+            Whether to plot dashboard during solve.
+        **kwarg :
+            Passed to update_Quantum / qbuilder.update_ildos
         """
-        Run the self-consistent iteration loop until convergence or until max_iter is reached.
-        The loop structure follows Fig.8 of the paper:
-          - Step I: Update the Q/Q' partition (remove depleted regions)
-          - Step II: Relax the Poisson (PAA) update (update potential)
-          - Step III: Relax the quantum (QAA) update (update ILDOS/density)
-        """
-        #initialize the problem by conducting iteration twice:
-        initial_loop=0
+        import time
+
+        # initialize active region once
         self.update_Qprime()
-        # while initial_loop<2:
-        #     self.local_solver()
-        #     self.update_Qprime()
-        #     psolver.calculate_delta(self)
-        #     self.Ci=psolver.solve_capacitance(self)
-        #     initial_loop+=1
-        iter_num=[0,0,0]
-        # self.update_Poisson()
-        #self.update_Quantum(system)
+
+        iter_num = [0, 0, 0]   # [Qprime updates, Poisson updates, Quantum updates]
+
         if save is not None:
-            Uis=[]
-            nis=[]
-            ildoss=[]
-            cut_idx=cut_idx=[qidx for qidx,idx in enumerate(self.Qsites) if np.abs(self.sites[idx].coordinates[0])<0.005 and self.sites[idx].material=='Qsystem']
-            ildoss=self.ildos[cut_idx]
+            Uis = []
+            nis = []
+            ildoss = []
+            cut_idx = [
+                qidx for qidx, idx in enumerate(self.Qsites)
+                if np.abs(self.sites[idx].coordinates[0]) < 0.005
+                and self.sites[idx].material == 'Qsystem'
+            ]
+            ildoss = self.ildos[cut_idx]
+
         while True:
-            print("The iteration has been conducted for ", iter_num,"times.")
-            print(self.log)
+            it = sum(iter_num)
+            t_iter0 = time.perf_counter()
+
+            print("The iteration has been conducted for", iter_num, "times.")
+            if hasattr(self, "print_iteration_summary"):
+                self.print_iteration_summary(it)
+
+            if snapshot_every is not None and snapshot_every > 0:
+                if it % snapshot_every == 0:
+                    if hasattr(self, "save_snapshot"):
+                        self.save_snapshot(it)
+
+            if show_dashboard and dashboard_every is not None and dashboard_every > 0:
+                if it % dashboard_every == 0:
+                    if hasattr(self, "plot_dashboard"):
+                        clear_output(wait=True)
+                        self.plot_dashboard(it)
+
             if save is not None:
                 Uis.append(self.Ui.copy())
                 nis.append(self.ni.copy())
-                self.save_Uini(Uis,nis,ildoss,filename=save)
-            
+                self.save_Uini(Uis, nis, ildoss, filename=save)
+
+            # ---------------------------------
+            # Step 1: local electrostatic update
+            # ---------------------------------
             self.local_solver()
+
+            # ---------------------------------
+            # Step 2: update Qprime partition
+            # ---------------------------------
+            qprime_before = len(self.Qprime)
             self.update_Qprime()
-            if self.log['Qprime_len'][-1]-self.log['Qprime_len'][-2]!=0:
+            qprime_after = len(self.Qprime)
+            self.log["Qprime_len"].append(qprime_after)
+
+            if qprime_after != qprime_before:
                 psolver.calculate_delta(self)
-                self.Ci=psolver.solve_capacitance(self)
-                iter_num[0]+=1
+
+                t0 = time.perf_counter()
+                self.Ci = psolver.solve_capacitance(self)
+                self.log["timing_poisson"].append(time.perf_counter() - t0)
+
+                iter_num[0] += 1
+                self.log["timing_total"].append(time.perf_counter() - t_iter0)
+
+                if sum(iter_num) >= max_total_iter:
+                    print("Reached maximum iteration count.")
+                    break
                 continue
-            else:
-                pass
-            
-            if np.abs(self.log['ni_error'][-1])>self.convergence_tol:
+
+            # ---------------------------------
+            # Step 3: Poisson update if needed
+            # ---------------------------------
+            need_poisson = (
+                len(self.log["ni_maxdiff"]) == 0
+                or self.log["ni_maxdiff"][-1] > self.convergence_tol
+            )
+
+            if need_poisson:
+                t0 = time.perf_counter()
                 self.update_Poisson()
-                iter_num[1]+=1
+                self.log["timing_poisson"].append(time.perf_counter() - t0)
+
+                iter_num[1] += 1
+                self.log["timing_total"].append(time.perf_counter() - t_iter0)
+
+                if sum(iter_num) >= max_total_iter:
+                    print("Reached maximum iteration count.")
+                    break
                 continue
-            else:
-                pass 
-            self.update_Poisson()   
 
+            # one more Poisson relaxation before quantum step
+            t0 = time.perf_counter()
+            self.update_Poisson()
+            self.log["timing_poisson"].append(time.perf_counter() - t0)
 
-            # if np.abs(self.log['ildos_error'][-1])>self.convergence_tol:
-            if np.sum(iter_num)< 30:
-                self.update_Quantum(system,approx="symmetry",Ncore=self.Ncore,num_sample=int(5*self.Ncore),**kwarg)
-                ildoss=self.ildos[cut_idx]
-                iter_num[2]+=1
+            # ---------------------------------
+            # Step 4: Quantum update
+            # ---------------------------------
+            if sum(iter_num) < max_total_iter:
+                t0 = time.perf_counter()
+                self.update_Quantum(
+                    system,
+                    approx="kmeanssample",
+                    Ncore=self.Ncore,
+                    num_sample=int(5 * self.Ncore),
+                    **kwarg
+                )
+                self.log["timing_quantum"].append(time.perf_counter() - t0)
+
+                if save is not None:
+                    ildoss = self.ildos[cut_idx]
+
+                iter_num[2] += 1
+                self.log["timing_total"].append(time.perf_counter() - t_iter0)
                 continue
             else:
                 print("The FSC has been solved.")
+                self.log["timing_total"].append(time.perf_counter() - t_iter0)
                 break
+    # def solve(self,system,save=None,**kwarg):
+    #     """
+    #     Run the self-consistent iteration loop until convergence or until max_iter is reached.
+    #     The loop structure follows Fig.8 of the paper:
+    #       - Step I: Update the Q/Q' partition (remove depleted regions)
+    #       - Step II: Relax the Poisson (PAA) update (update potential)
+    #       - Step III: Relax the quantum (QAA) update (update ILDOS/density)
+    #     """
+    #     #initialize the problem by conducting iteration twice:
+    #     initial_loop=0
+    #     self.update_Qprime()
+    #     # while initial_loop<2:
+    #     #     self.local_solver()
+    #     #     self.update_Qprime()
+    #     #     psolver.calculate_delta(self)
+    #     #     self.Ci=psolver.solve_capacitance(self)
+    #     #     initial_loop+=1
+    #     iter_num=[0,0,0]
+    #     # self.update_Poisson()
+    #     #self.update_Quantum(system)
+    #     if save is not None:
+    #         Uis=[]
+    #         nis=[]
+    #         ildoss=[]
+    #         cut_idx=cut_idx=[qidx for qidx,idx in enumerate(self.Qsites) if np.abs(self.sites[idx].coordinates[0])<0.005 and self.sites[idx].material=='Qsystem']
+    #         ildoss=self.ildos[cut_idx]
+    #     while True:
+    #         t_iter0 = time.perf_counter()
+    #         it = sum(iter_num)
+
+    #         print("The iteration has been conducted for ", iter_num, "times.")
+    #         self.print_iteration_summary(it)
+
+    #         if it % 5 == 0:
+    #             self.save_snapshot(it)
+    #             self.plot_dashboard(it)
+
+
+    #         if save is not None:
+    #             Uis.append(self.Ui.copy())
+    #             nis.append(self.ni.copy())
+    #             self.save_Uini(Uis,nis,ildoss,filename=save)
+            
+    #         self.local_solver()
+
+    #         t0 = time.perf_counter()
+    #         self.local_solver()
+    #         t_local = time.perf_counter() - t0
+
+    #         self.update_Qprime()
+    #         if self.log['Qprime_len'][-1]-self.log['Qprime_len'][-2]!=0:
+    #             psolver.calculate_delta(self)
+    #             self.Ci=psolver.solve_capacitance(self)
+    #             iter_num[0]+=1
+    #             continue
+    #         else:
+    #             pass
+            
+    #         if self.log["ni_maxdiff"] and self.log["ni_maxdiff"][-1] > self.convergence_tol:
+    #             self.update_Poisson()
+    #             iter_num[1]+=1
+    #             continue
+    #         else:
+    #             pass 
+
+    #         t0 = time.perf_counter()
+    #         self.update_Poisson()
+    #         t_poisson = time.perf_counter() - t0
+    #         self.log["timing_poisson"].append(t_poisson) 
+
+
+    #         # if np.abs(self.log['ildos_error'][-1])>self.convergence_tol:
+    #         if np.sum(iter_num)< 30:
+    #             self.update_Quantum(system,approx="kmeanssample",Ncore=self.Ncore,num_sample=int(5*self.Ncore),**kwarg)
+    #             ildoss=self.ildos[cut_idx]
+    #             iter_num[2]+=1
+    #             continue
+    #         else:
+    #             print("The FSC has been solved.")
+    #             break
             
 
     def save_Uini(self,Uis,nis,ildoss,filename):
@@ -421,4 +624,135 @@ class FSC:
 
         plt.show()
 
-    
+########debug log info############        
+    def save_snapshot(self, it):
+        snap = {
+            "Ui": self.Ui.copy(),
+            "ni": self.ni.copy(),
+            "Qprime": self.Qprime.copy(),
+        }
+
+        if self.ildos is not None and self.dashboard_sites is not None:
+            snap["ldos_sites"] = {}
+            for site in self.dashboard_sites:
+                try:
+                    snap["ldos_sites"][site] = np.array(self.ildos[site], dtype=object)
+                except Exception:
+                    pass
+
+        self.snapshots[it] = snap
+
+    def print_iteration_summary(self, iter_num):
+        print(f"\n--- Iteration {iter_num} ---")
+        print(f"Qprime size   : {len(self.Qprime)}")
+
+        if self.log["Ui_maxdiff"]:
+            print(f"max |ΔU|      : {self.log['Ui_maxdiff'][-1]:.3e}")
+            print(f"L2(ΔU)        : {self.log['Ui_l2diff'][-1]:.3e}")
+
+        if self.log["ni_maxdiff"]:
+            print(f"max |Δn|      : {self.log['ni_maxdiff'][-1]:.3e}")
+            print(f"L2(Δn)        : {self.log['ni_l2diff'][-1]:.3e}")
+
+        if self.log["ildos_maxdiff"]:
+            print(f"max |ΔILDOS|  : {self.log['ildos_maxdiff'][-1]:.3e}")
+
+    def plot_convergence(self):
+
+        fig, ax = plt.subplots(1, 3, figsize=(14, 4))
+
+        ax[0].plot(self.log["Ui_maxdiff"])
+        ax[0].set_yscale("log")
+        ax[0].set_title("max |ΔU|")
+
+        ax[1].plot(self.log["ni_maxdiff"])
+        ax[1].set_yscale("log")
+        ax[1].set_title("max |Δn|")
+
+        ax[2].plot(self.log["Qprime_len"])
+        ax[2].set_title("Qprime size")
+
+        plt.tight_layout()
+        plt.show()
+
+    def init_dashboard_sites(self, n_sites=4):
+        coords = np.array([self.sites[idx].coordinates[:2] for idx in self.Qsites])
+
+        # pick corners + center approximately
+        center = coords.mean(axis=0)
+        d_center = np.linalg.norm(coords - center, axis=1)
+        center_idx = np.argmin(d_center)
+
+        x_min_idx = np.argmin(coords[:, 0])
+        x_max_idx = np.argmax(coords[:, 0])
+        y_min_idx = np.argmin(coords[:, 1])
+        y_max_idx = np.argmax(coords[:, 1])
+
+        chosen = list(dict.fromkeys([center_idx, x_min_idx, x_max_idx, y_min_idx, y_max_idx]))
+        self.dashboard_sites = chosen[:n_sites]
+
+    def plot_dashboard(self, it=None):
+
+        fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+        ax_conv, ax_U, ax_n, ax_ldos = axes.ravel()
+
+        # ----------------------------
+        # Panel 1: convergence curves
+        # ----------------------------
+        if len(self.log["Ui_maxdiff"]) > 0:
+            ax_conv.plot(self.log["Ui_maxdiff"], label="max |ΔU|")
+        if len(self.log["ni_maxdiff"]) > 0:
+            ax_conv.plot(self.log["ni_maxdiff"], label="max |Δn|")
+        if len(self.log["ildos_maxdiff"]) > 0:
+            ax_conv.plot(self.log["ildos_maxdiff"], label="max |ΔILDOS|")
+
+        ax_conv.set_yscale("log")
+        ax_conv.set_title("Convergence")
+        ax_conv.legend()
+
+        # ----------------------------
+        # coordinates on Qsites
+        # ----------------------------
+        coords = np.array([self.sites[idx].coordinates[:2] for idx in self.Qsites])
+
+        # ----------------------------
+        # Panel 2: Ui
+        # ----------------------------
+        Ui_q = self.Ui[self.Qsites]
+        sc1 = ax_U.scatter(coords[:, 0], coords[:, 1], c=Ui_q, cmap="coolwarm", s=30)
+        fig.colorbar(sc1, ax=ax_U, pad=0.02)
+        ax_U.set_aspect("equal")
+        ax_U.set_title("Ui on Qsites")
+
+        # ----------------------------
+        # Panel 3: ni
+        # ----------------------------
+        ni_q = self.ni[self.Qsites]
+        sc2 = ax_n.scatter(coords[:, 0], coords[:, 1], c=ni_q, cmap="viridis", s=30)
+        fig.colorbar(sc2, ax=ax_n, pad=0.02)
+        ax_n.set_aspect("equal")
+        ax_n.set_title("ni on Qsites")
+
+        # ----------------------------
+        # Panel 4: tracked LDOS
+        # ----------------------------
+        if self.ildos is not None and self.dashboard_sites is not None:
+            for site in self.dashboard_sites:
+                try:
+                    E = np.asarray(self.ildos[site][0], dtype=float)
+                    rho = np.asarray(self.ildos[site][1], dtype=float)
+                    ax_ldos.plot(E, rho, label=f"site {site}")
+                except Exception:
+                    pass
+
+        ax_ldos.set_title("Tracked LDOS")
+        ax_ldos.set_xlabel("Energy")
+        ax_ldos.set_ylabel("LDOS")
+        if self.dashboard_sites is not None:
+            ax_ldos.legend(fontsize=8)
+
+        if it is not None:
+            fig.suptitle(f"FSC dashboard — iteration {it}", fontsize=14)
+
+        plt.tight_layout()
+        plt.show()
