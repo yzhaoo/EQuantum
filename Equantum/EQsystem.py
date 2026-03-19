@@ -75,7 +75,7 @@ class System:
             self.lat_spacing_real=0.565 #nm
             self.unit_cell_area=(self.lat_spacing*1e-6)**2
             self.unit_cell_area_real=(self.lat_spacing_real*1e-9)**2
-            self.max_fill=1/self.unit_cell_area_real/1e16 #maximal spinless carrier density, unit: # 10^12/cm^-2          
+            self.max_fill=2/self.unit_cell_area/1e16 #maximal spinless carrier density, unit: # 10^12/cm^-2          
         elif self.geometry_params["lattice_type"]=="honeycomb":
             # use v_F=1e6 m/s from graphene
             #self.t=2*sc.hbar*1e6/(3*(self.lat_spacing*1e-6))/sc.elementary_charge
@@ -83,7 +83,7 @@ class System:
             self.lat_spacing_real=0.142 #nm
             self.unit_cell_area=(3*np.sqrt(3)*(self.lat_spacing*1e-6)**2 /2)
             self.unit_cell_area_real=(3*np.sqrt(3)*(self.lat_spacing_real*1e-9)**2 /2)
-            self.max_fill=2/self.unit_cell_area_real/1e16 #maximal spinless carrier density, unit: # 10^12 /cm^-2
+            self.max_fill=2/self.unit_cell_area/1e16 #maximal spinless carrier density, unit: # 10^12 /cm^-2
             
         else:
             self.t=t

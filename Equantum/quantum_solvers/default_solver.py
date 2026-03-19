@@ -2,6 +2,7 @@ import numpy as np
 from scipy.sparse import lil_matrix, csr_matrix
 from functools import partial
 from joblib import Parallel, delayed
+import scipy.sparse.linalg as spla
 from tqdm import tqdm
 from functools import partial
 from .kpm_solver import kpm_dos, kpm_ldos, kpm_dos_many, kpm_dos_from_ldos
@@ -62,7 +63,7 @@ class QuantumSystem:
         """
         Estimate spectral bounds of the Hamiltonian.
         """
-        import scipy.sparse.linalg as spla
+
 
         H = self.get_hamiltonian()
 
@@ -160,41 +161,67 @@ class QuantumSystem:
             self.update_qparams(qparams)
 
         if approx == "TF":
-            bulk_dos = self.get_dos(w=Erange, M=M, n_random=n_random)
-            dataall = [bulk_dos for _ in range(len(self.Qsites))]
+            bulk_E, bulk_rho = self.get_dos(w=Erange, M=M, n_random=n_random, **kwargs)
+
+            norm = np.trapz(bulk_rho, bulk_E)
+            if norm > 0:
+                bulk_rho = bulk_rho / norm * fsc.max_fill
+            dataall = [(bulk_E, bulk_rho) for _ in range(len(self.Qsites))]
 
         elif approx == "kmeanssample":
+            # already normalized per cluster inside sample_ldos
             dataall = self.sample_ldos(fsc, Ncore=Ncore, M=M, **kwargs)
 
         else:
             H = self.get_hamiltonian()
 
             if Ncore > 1:
-                dataall = Parallel(n_jobs=Ncore)(
+                raw = Parallel(n_jobs=Ncore)(
                     delayed(kpm_ldos)(
                         H,
                         site_index=ii,
                         energies=Erange - fsc.Ui[fsc.Qsites][ii],
-                        num_moments=M
+                        num_moments=M,
+                        **kwargs
                     )
                     for ii in range(len(self.Qsites))
                 )
             else:
-                dataall = []
+                raw = []
                 for ii in tqdm(range(len(self.Qsites))):
-                    datai = kpm_ldos(
-                        H,
-                        site_index=ii,
-                        energies=Erange - fsc.Ui[fsc.Qsites][ii],
-                        num_moments=M
+                    raw.append(
+                        kpm_ldos(
+                            H,
+                            site_index=ii,
+                            energies=Erange - fsc.Ui[fsc.Qsites][ii],
+                            num_moments=M,
+                            **kwargs
+                        )
                     )
-                    dataall.append(datai)
 
-        return np.array(dataall, dtype=object)
+            dataall = np.stack(
+                [
+                    np.stack(
+                        [np.asarray(E, dtype=float), np.asarray(rho, dtype=float)],
+                        axis=0
+                    )
+                    for E, rho in raw
+                ],
+                axis=0
+            )
+
+            # normalize site-by-site only in this branch
+            E = dataall[:, 0, :]
+            rho = dataall[:, 1, :]
+
+            norms = np.trapz(rho, E, axis=1)
+            mask = norms > 0
+            dataall[mask, 1, :] = rho[mask] / norms[mask, None] * fsc.max_fill
+
+        return dataall
 
     def sample_ldos(self, fsc, num_sample=20, Ncore=1, M=512, u_weight=2.0,return_groups=False, **kwargs):
-        from sklearn.cluster import KMeans
-        import numpy as np
+
 
         emin, emax = self.get_energy_bounds()
         Erange = np.linspace(emin, emax, int(len(self.Qsites) / 2))
@@ -252,6 +279,9 @@ class QuantumSystem:
                 num_moments=M,
                 **kwargs
             )
+            norm = np.trapz(rho, E)
+            if norm > 0:
+                rho = rho / norm * fsc.max_fill
 
             E = E + Uis[qidx]
             return np.array([E, rho])

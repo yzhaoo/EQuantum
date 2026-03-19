@@ -34,7 +34,8 @@ def local_solver_i(idx, ildos, Ci, ni, Ui, limits=None):
     y_dis = np.asarray(ildos[1], dtype=float)
 
     # cumulative integrated LDOS
-    ildos_dis = np.cumsum(y_dis)
+    ildos_dis = np.zeros_like(y_dis, dtype=float)
+    ildos_dis[1:] = np.cumsum(0.5 * (y_dis[1:] + y_dis[:-1]) * np.diff(x_dis))
 
     ildos_interp = interp1d(
         x_dis,

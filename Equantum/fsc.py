@@ -5,6 +5,7 @@ import numpy as np
 import solvers as solvers
 import scipy.constants as sc
 import scipy.sparse.linalg as spla
+
 import time
 
 import scipy.io as sio
@@ -191,14 +192,17 @@ class FSC:
         pre_ildos = self.ildos.copy()
         qbuilder.update_U(self, system)
 
-        self.ildos[np.array(list(self.Qp_in_Q.values()))] = qbuilder.update_ildos(
-            self, system, **kwarg
-        )
+        new_ildos = qbuilder.update_ildos(self, system, **kwarg)
+        q_indices = list(self.Qp_in_Q.values())
 
-        dildos = self.ildos - pre_ildos
+        for dest, src in zip(q_indices, new_ildos):
+            self.ildos[dest] = src
+
+        curr_ildos = np.asarray(self.ildos, dtype=float)
+        prev_ildos = np.asarray(pre_ildos, dtype=float)
+
+        dildos = curr_ildos - prev_ildos
         self.log["ildos_maxdiff"].append(np.max(np.abs(dildos)))
-
-        self.ni[self.Qprime] = qbuilder.get_n_from_ildos(self, self.ildos)
 
 
 
@@ -471,7 +475,7 @@ class FSC:
         mdic['Uis']=Uis
         mdic['nis']=nis
         mdic['ildoss']=ildoss
-        from scipy.io import savemat
+        
         mat_fname=filename
         savemat(mat_fname,mdic)
 
@@ -512,34 +516,39 @@ class FSC:
         plt.show()
 
 
-    def plot_qsystem(self,prop_values,**kwarg):
+    def plot_qsystem(self, prop_values, title="System Sites", **kwarg):
         """
-        Plot the discretized sites in 2d quantum system
-        
-        If 'prop' is None, sites are colored according to their material (discrete colors).
-        Otherwise, 'prop' is expected to be a property name (e.g., "charge") and sites
-        will be colored using a continuous colormap based on that property's value.
+        Plot the discretized sites in 2D quantum system.
+
+        Parameters
+        ----------
+        prop_values : array-like
+            Values defined on Qsites.
+        title : str
+            Figure title.
+        **kwarg :
+            Extra kwargs passed to ax.scatter().
         """
-        fig, ax=plt.subplots(figsize=(10,8))
-        # Color sites based on a continuous property, e.g., "charge".
+        fig, ax = plt.subplots(figsize=(10, 8))
+
         coords = np.array([site.coordinates for site in self.sites.values()])[self.Qsites]
         prop_values = np.array(prop_values)
-        
-        # Create a normalization and a ScalarMappable for the colormap.
-        #norm = mcolors.Normalize(vmin=np.min(prop_values), vmax=np.max(prop_values))
+
         cmap = cm.viridis
-        sc = ax.scatter(coords[:, 0], coords[:, 1],
-                        c=prop_values, cmap=cmap, s=20,**kwarg)
-        # Add a colorbar to indicate the property values.
-        cbar = fig.colorbar(sc, ax=ax, pad=0.1)
-        #cbar.set_label(prop_values)
-        #box_size=self.geometry_params['box_size']
-        #ax.set_box_aspect((box_size[0][1]-box_size[0][0], box_size[1][1]-box_size[1][0], box_size[2][1]-box_size[2][0]))
-        ax.axis('equal')
+        sc = ax.scatter(
+            coords[:, 0],
+            coords[:, 1],
+            c=prop_values,
+            cmap=cmap,
+            s=20,
+            **kwarg
+        )
+
+        fig.colorbar(sc, ax=ax, pad=0.1)
+        ax.axis("equal")
         ax.set_xlabel("X")
         ax.set_ylabel("Y")
-        ax.set_title("System Sites")
-        ax.legend()
+        ax.set_title(title)
         plt.show()
     
     def plot_Hamiltonian(self, ax=None):
