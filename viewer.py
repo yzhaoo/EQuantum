@@ -7,7 +7,7 @@ from scipy.interpolate import interp1d
 
 from bokeh.plotting import figure
 from bokeh.models import ColumnDataSource, LinearColorMapper, ColorBar
-from bokeh.palettes import Viridis256
+from bokeh.palettes import Turbo256
 
 import matplotlib
 matplotlib.use("agg")
@@ -128,7 +128,7 @@ fig = figure(
     match_aspect=True
 )
 
-mapper = LinearColorMapper(palette=Viridis256)
+mapper = LinearColorMapper(palette=Turbo256)
 
 renderer = fig.scatter(
     "x", "y",
