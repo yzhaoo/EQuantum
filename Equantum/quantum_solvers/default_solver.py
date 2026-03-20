@@ -9,61 +9,149 @@ from .kpm_solver import kpm_dos, kpm_ldos, kpm_dos_many, kpm_dos_from_ldos
 from sklearn.cluster import KMeans
 
 class QuantumSystem:
-    def __init__(self, syst, qparams={'Ufunc': lambda x: 0,'phi':0.}):
-        """
-        Initialize the quantum system.
-        
-        Parameters:
-          Qsites: list of site dictionaries.
-          qparams: dictionary of parameters, for example:
-              {
-                  'Ufunc': <callable that takes a site and returns an onsite energy>,
-                  'mag_hop': <callable that takes (site_i, site_j, phi) and returns a hopping amplitude>,
-                  'phi': <phase parameter>
-              }
-        """
-        self.Qsites = [syst.sites[idx] for idx in syst.Qsites]
-        self.q_to_Q_map={qidx:idx for idx, qidx in enumerate(syst.Qsites)}
-        self.all_sites=syst.sites
-        self.qparams = qparams.copy()  # Store the parameter dictionary
-        self.N = len(self.Qsites)
-        self.lattice_type=syst.geometry_params['lattice_type']
-        self.lat_spacing=syst.lat_spacing
-        self.t=syst.t
+
+    def __init__(self, syst, qparams={'Ufunc': lambda x: 0, 'phi': 0.}):
+
+        # --- global system ---
+        self.all_sites = syst.sites
+        self.all_Qsites = np.array(syst.Qsites, dtype=int)
+
+        # --- mapping: site_id → full index ---
+        self.full_map = {
+            sid: i for i, sid in enumerate(self.all_Qsites)
+        }
+
+        # --- active region (initially full) ---
+        self.Qsite_ids = self.all_Qsites.copy()
+        self.q_to_Q_map = {
+            sid: i for i, sid in enumerate(self.Qsite_ids)
+        }
+
+        self.qparams = qparams.copy()
+
+        self.lattice_type = syst.geometry_params['lattice_type']
+        self.lat_spacing = syst.lat_spacing
+        self.t = syst.t
+
+        # --- build base Hamiltonian ---
+        self.build_H0()
+
+        # --- active Hamiltonian ---
         self.H = None
-        self.build_hamiltonian()
-    
-    def build_hamiltonian(self):
-        Ufunc = self.qparams['Ufunc']  # This is a function we haven't called yet.
+        self.build_active_H()
+        
+
+    # -------------------------------------------------
+    # Build base Hamiltonian (ONLY hopping)
+    # -------------------------------------------------
+    def build_H0(self):
         phi = self.qparams['phi']
         lat_spacing=self.lat_spacing
 
-        hop_func= mag_hop_square if self.lattice_type=="square" else mag_hop_honeycomb
-        
-        
-        self.H = lil_matrix((self.N, self.N), dtype=np.complex128)
-        
-        for i, site in enumerate(self.Qsites):
-            # Diagonal term: call the onsite function with the site.
-            self.H[i, i] = onsite_pot(site, Ufunc) 
+        N = len(self.all_Qsites)
+
+        self.H0 = lil_matrix((N, N), dtype=np.complex128)
+
+        hop_func = mag_hop_square if self.lattice_type == "square" else mag_hop_honeycomb
+
+        for i, site_id in enumerate(self.all_Qsites):
+            site = self.all_sites[site_id]
+
             for j in site.neighbors:
-                if np.abs(self.all_sites[j].coordinates[2]) < 1e-4 and self.all_sites[j].material == 'Qsystem':
-                    try:
-                        j_idx=self.q_to_Q_map[j]
-                    except KeyError:
-                            print(j)
-                    neighbor = self.Qsites[j_idx]
-                    coord_j = np.array(neighbor.coordinates)
-                    # Only add hopping if neighbor's z coordinate is near 0.
-                    hop_val = hop_func(self.t,site, neighbor, phi,lat_spacing)
-                    #hop_val_back=hop_func(self.t, neighbor,site, phi,lat_spacing)
-                    self.H[i, j_idx] = hop_val
-                    #self.H[j_idx, i] = hop_val_back
-    def get_energy_bounds(self, margin=0.05):
+                if j not in self.full_map:
+                    continue
+
+                neighbor = self.all_sites[j]
+                j_idx = self.full_map[j]
+
+                hop_val = hop_func(self.t, site, neighbor,
+                                   phi,
+                                   lat_spacing)
+
+                self.H0[i, j_idx] = hop_val
+                self.H0[j_idx, i] = np.conjugate(hop_val)
+
+        self.H0 = self.H0.tocsr()
+
+    # -------------------------------------------------
+    # Build active Hamiltonian from H0
+    # -------------------------------------------------
+    def build_active_H(self):
+
+        Ufunc = self.qparams['Ufunc']
+
+        # --- indices in full system ---
+        idx = np.array([self.full_map[sid] for sid in self.Qsite_ids], dtype=int)
+
+        # --- slice H0 ---
+        H = self.H0[idx][:, idx].tolil()
+
+        # --- add onsite ---
+        for i, sid in enumerate(self.Qsite_ids):
+            site = self.all_sites[sid]
+            H[i, i] += Ufunc(site)
+
+        self.H = H.tocsr()
+
+        # --- update mapping ---
+        self.q_to_Q_map = {
+            sid: i for i, sid in enumerate(self.Qsite_ids)
+        }
+
+        self.N = len(self.Qsite_ids)
+
+    # -------------------------------------------------
+    # Update active region (Qprime)
+    # -------------------------------------------------
+    def update_active_sites(self, qsite_ids):
+
+        self.Qsite_ids = np.array(qsite_ids, dtype=int)
+
+        self.build_active_H()
+
+    # -------------------------------------------------
+    # Update parameters (ONLY rebuild onsite)
+    # -------------------------------------------------
+    def update_qparams(self, new_qparams):
         """
-        Estimate spectral bounds of the Hamiltonian.
+        General parameter update.
+        Always rebuild everything to guarantee correctness.
         """
 
+        self.qparams = {**self.qparams, **new_qparams}
+
+        print("🔄 Full Hamiltonian rebuild (qparams change)")
+
+        # rebuild hopping (depends on phi etc.)
+        self.build_H0()
+
+        # rebuild active Hamiltonian
+        self.build_active_H()
+
+    # -------------------------------------------------
+    def update_U(self, fsc):
+        """
+        Fast update: only onsite potential changes.
+        """
+
+        def Ufunc(site):
+            return -fsc.Ui[site.id]
+
+        # update locally without touching H0
+        self.qparams["Ufunc"] = Ufunc
+
+        # only rebuild active Hamiltonian (cheap)
+        self.build_active_H()
+
+        # keep FSC in sync
+        fsc.qparams = dict(self.qparams)
+
+    # -------------------------------------------------
+    def get_hamiltonian(self):
+        return self.H
+
+    # -------------------------------------------------
+    def get_energy_bounds(self, margin=0.05):
 
         H = self.get_hamiltonian()
 
@@ -80,21 +168,8 @@ class QuantumSystem:
 
         return emin - pad, emax + pad
     
-    def update_qparams(self, new_qparams):
-        """
-        Update the parameters (such as Ufunc or phi) and rebuild the Hamiltonian.
-        """
-        self.qparams = {**self.qparams, **new_qparams}
-        self.build_hamiltonian()
+    # --------------------------------------------------
 
-    def update_U(self,fsc):
-        def Ufunc(site):
-            return -fsc.Ui[site.id]
-
-        new_qparams = {**self.qparams, "Ufunc": Ufunc}
-        self.update_qparams(new_qparams)
-        fsc.qparams = dict(new_qparams)
-    
     def get_hamiltonian(self):
         return self.H.tocsr()
 
@@ -155,23 +230,26 @@ class QuantumSystem:
 
     def get_ldos(self, fsc, qparams=None, approx="TF", Ncore=0, M=512, n_random=8, **kwargs):
         emin, emax = self.get_energy_bounds()
-        Erange = np.linspace(emin, emax, int(len(self.Qsites) / 2))
+        nE_local = max(256, int(self.N / 2))
+        Erange = np.linspace(emin, emax, nE_local)
 
         if qparams is not None:
             self.update_qparams(qparams)
 
         if approx == "TF":
             bulk_E, bulk_rho = self.get_dos(w=Erange, M=M, n_random=n_random, **kwargs)
-
-            norm = np.trapz(bulk_rho, bulk_E)
-            if norm > 0:
-                bulk_rho = bulk_rho / norm * fsc.max_fill
-            dataall = [(bulk_E, bulk_rho) for _ in range(len(self.Qsites))]
+            bulk_proj = project_ldos_to_global_grid(
+                bulk_E, bulk_rho, fsc.E_global, fsc.max_fill
+            )
+            dataall = np.repeat(
+                bulk_proj[None, :, :],
+                self.N,
+                axis=0
+            )
 
         elif approx == "kmeanssample":
             # already normalized per cluster inside sample_ldos
             dataall = self.sample_ldos(fsc, Ncore=Ncore, M=M, **kwargs)
-
         else:
             H = self.get_hamiltonian()
 
@@ -180,20 +258,20 @@ class QuantumSystem:
                     delayed(kpm_ldos)(
                         H,
                         site_index=ii,
-                        energies=Erange - fsc.Ui[fsc.Qsites][ii],
+                        energies=Erange,
                         num_moments=M,
                         **kwargs
                     )
-                    for ii in range(len(self.Qsites))
+                    for ii in range(self.N)
                 )
             else:
                 raw = []
-                for ii in tqdm(range(len(self.Qsites))):
+                for ii in tqdm(range(self.N)):
                     raw.append(
                         kpm_ldos(
                             H,
                             site_index=ii,
-                            energies=Erange - fsc.Ui[fsc.Qsites][ii],
+                            energies=Erange,
                             num_moments=M,
                             **kwargs
                         )
@@ -201,54 +279,64 @@ class QuantumSystem:
 
             dataall = np.stack(
                 [
-                    np.stack(
-                        [np.asarray(E, dtype=float), np.asarray(rho, dtype=float)],
-                        axis=0
-                    )
+                    project_ldos_to_global_grid(E, rho, fsc.E_global, fsc.max_fill)
                     for E, rho in raw
                 ],
                 axis=0
             )
 
-            # normalize site-by-site only in this branch
-            E = dataall[:, 0, :]
-            rho = dataall[:, 1, :]
-
-            norms = np.trapz(rho, E, axis=1)
-            mask = norms > 0
-            dataall[mask, 1, :] = rho[mask] / norms[mask, None] * fsc.max_fill
-
         return dataall
 
-    def sample_ldos(self, fsc, num_sample=20, Ncore=1, M=512, u_weight=2.0,return_groups=False, **kwargs):
+    def sample_ldos(
+        self,
+        fsc,
+        num_sample=20,
+        Ncore=1,
+        M=512,
+        u_weight=2.0,
+        return_groups=False,
+        **kwargs
+    ):
 
-
+        # -----------------------------
+        # Adaptive KPM energy window
+        # -----------------------------
         emin, emax = self.get_energy_bounds()
-        Erange = np.linspace(emin, emax, int(len(self.Qsites) / 2))
+        nE_local = max(256, int(self.N / 2))
+        Erange = np.linspace(emin, emax, nE_local)
 
-        qprime_ids = list(fsc.Qprime)
-        coords = np.array([fsc.sites[idx].coordinates[:2] for idx in qprime_ids])
-        Uvals = np.array([fsc.Ui[idx] for idx in qprime_ids])
+        # -----------------------------
+        # Active region (Qprime)
+        # -----------------------------
+        qprime_ids = np.array(fsc.Qprime, dtype=int)
 
-        num_sample = min(num_sample, len(coords))
+        coords = np.array(
+            [fsc.sites[idx].coordinates[:2] for idx in qprime_ids],
+            dtype=float
+        )
 
-        # standardize features
-        x = coords[:, 0]
-        y = coords[:, 1]
-        u = Uvals.copy()
+        Uvals = np.array([fsc.Ui[idx] for idx in qprime_ids], dtype=float)
 
+        num_sample = min(num_sample, len(qprime_ids))
+
+        # -----------------------------
+        # Feature construction
+        # -----------------------------
         def safe_standardize(arr):
             s = arr.std()
             if s < 1e-14:
                 return np.zeros_like(arr)
             return (arr - arr.mean()) / s
 
-        xz = safe_standardize(x)
-        yz = safe_standardize(y)
-        uz = safe_standardize(u) * u_weight
+        xz = safe_standardize(coords[:, 0])
+        yz = safe_standardize(coords[:, 1])
+        uz = safe_standardize(Uvals) * u_weight
 
         features = np.column_stack([xz, yz, uz])
 
+        # -----------------------------
+        # KMeans clustering
+        # -----------------------------
         kmeans = KMeans(n_clusters=num_sample, n_init=10)
         labels = kmeans.fit_predict(features)
 
@@ -258,55 +346,100 @@ class QuantumSystem:
             if len(idx) > 0:
                 site_in_b.append(idx)
 
-        Uis = fsc.Ui[fsc.Qsites]
-        Qp_in_Q_map = fsc.Qp_in_Q.copy()
         H = self.get_hamiltonian()
 
+        # -----------------------------
+        # Helper: project to global grid
+        # -----------------------------
+        def project(E_local, rho_local):
+            rho_global = np.interp(
+                fsc.E_global,
+                E_local,
+                rho_local,
+                left=0.0,
+                right=0.0
+            )
+
+            norm = np.trapz(rho_global, fsc.E_global)
+            if norm > 0:
+                rho_global = rho_global / norm * fsc.max_fill
+
+            return np.array([fsc.E_global, rho_global], dtype=float)
+
+        # -----------------------------
+        # Compute LDOS per cluster
+        # -----------------------------
         def calculate_ldos(indices):
-            # choose representative site closest to cluster center in feature space
+
+            # choose representative site (closest to cluster center)
             cluster_features = features[indices]
             center = cluster_features.mean(axis=0)
-            local_idx = np.argmin(np.linalg.norm(cluster_features - center, axis=1))
-            rep_site = indices[local_idx]
 
-            qidx = Qp_in_Q_map[rep_site]
-            energies = Erange - Uis[qidx]
+            local_idx = np.argmin(
+                np.linalg.norm(cluster_features - center, axis=1)
+            )
 
+            # 🔥 IMPORTANT: convert index → site_id
+            rep_site = qprime_ids[indices[local_idx]]
+
+            # 🔥 map site_id → local Hamiltonian index
+            qidx = self.q_to_Q_map[rep_site]
+
+            # KPM
             E, rho = kpm_ldos(
                 H,
                 site_index=qidx,
-                energies=energies,
+                energies=Erange,
                 num_moments=M,
                 **kwargs
             )
-            norm = np.trapz(rho, E)
-            if norm > 0:
-                rho = rho / norm * fsc.max_fill
 
-            E = E + Uis[qidx]
-            return np.array([E, rho])
+            return project(E, rho)
 
+        # -----------------------------
+        # Parallel / serial execution
+        # -----------------------------
         if Ncore > 1:
             bin_ldos = Parallel(n_jobs=Ncore)(
-                delayed(calculate_ldos)(indices) for indices in site_in_b
+                delayed(calculate_ldos)(indices)
+                for indices in site_in_b
             )
         else:
-            bin_ldos = [calculate_ldos(indices) for indices in site_in_b]
+            bin_ldos = [
+                calculate_ldos(indices)
+                for indices in site_in_b
+            ]
 
+        # -----------------------------
+        # Broadcast cluster LDOS
+        # -----------------------------
         dataall = []
         for bidx, indices in enumerate(site_in_b):
-            dataall.append(np.array([bin_ldos[bidx] for _ in range(len(indices))]))
+            n = len(indices)
+            dataall.append(
+                np.repeat(bin_ldos[bidx][None, :, :], n, axis=0)
+            )
 
-        sortidx = np.argsort(np.concatenate(site_in_b))
-        ldos_out = np.concatenate(dataall)[sortidx]
+        # -----------------------------
+        # Restore Qprime ordering
+        # -----------------------------
+        flat_indices = np.concatenate(site_in_b)
+        sortidx = np.argsort(flat_indices)
 
+        ldos_out = np.concatenate(dataall, axis=0)[sortidx]
+
+        # -----------------------------
+        # Optional debug info
+        # -----------------------------
         if return_groups:
             rep_sites = []
             for indices in site_in_b:
                 cluster_features = features[indices]
                 center = cluster_features.mean(axis=0)
-                local_idx = np.argmin(np.linalg.norm(cluster_features - center, axis=1))
-                rep_sites.append(indices[local_idx])
+                local_idx = np.argmin(
+                    np.linalg.norm(cluster_features - center, axis=1)
+                )
+                rep_sites.append(qprime_ids[indices[local_idx]])
 
             group_info = {
                 "labels": labels,
@@ -314,6 +447,7 @@ class QuantumSystem:
                 "rep_sites": np.array(rep_sites, dtype=int),
                 "coords": coords,
             }
+
             return ldos_out, group_info
 
         return ldos_out
@@ -322,7 +456,24 @@ class QuantumSystem:
 
         
 
+def project_ldos_to_global_grid(E_local, rho_local, E_global, max_fill):
+        E_local = np.asarray(E_local, dtype=float)
+        rho_local = np.asarray(rho_local, dtype=float)
+        E_global = np.asarray(E_global, dtype=float)
 
+        rho_global = np.interp(
+            E_global,
+            E_local,
+            rho_local,
+            left=0.0,
+            right=0.0
+        )
+
+        norm = np.trapz(rho_global, E_global)
+        if norm > 0:
+            rho_global = rho_global / norm * max_fill
+
+        return np.array([E_global, rho_global], dtype=float)
         
 
         

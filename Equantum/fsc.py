@@ -5,6 +5,7 @@ import numpy as np
 import solvers as solvers
 import scipy.constants as sc
 import scipy.sparse.linalg as spla
+import os
 
 import time
 
@@ -36,6 +37,7 @@ class FSC:
         self.material_indices=system.material_indices
         self.ni=np.array([site.charge for i, site in self.sites.items()])
         self.Ui=np.array([site.potential for i, site in self.sites.items()])
+        self.Ui_quantum = self.Ui.copy()#separat the active region and the pinning region
         self.N_indices = (system.N_indices).copy()
         self.D_indices = (system.D_indices).copy()
         self.t=system.t
@@ -44,7 +46,12 @@ class FSC:
         self.unit_cell_area=system.unit_cell_area
         self.unit_cell_area_real=system.unit_cell_area_real
         self.max_fill=system.max_fill
+        self.system = system
         self.energy_bounds = None
+        # fixed global storage grid for LDOS
+        # choose a range wide enough for physical charge integration,
+        # but this grid is only for storage / integration, not KPM scaling
+        self.E_global = np.linspace(-6 * self.t, 6 * self.t, 1024)
         
         #initialize with Poisson solver parameters
         self.Ci=None
@@ -53,13 +60,22 @@ class FSC:
         self.Delta_matrix= None
 
         #initialize with quantum solver parameters
-        self.qparams={}
-        self.ildos=None
-        self.Qsites=system.Qsites
-        self.Qprime=system.Qsites.copy()
-        self.qsystem=system.qsystem
+        # initialize with quantum solver parameters
+        self.qsystem = system.qsystem
+        self.qparams = dict(self.qsystem.qparams)   # keep FSC and qsystem aligned
+        self.ildos = None
+
+        self.Qsites = np.array(system.Qsites, dtype=int)
+        self.Qprime = self.Qsites.copy()
         self.Qsites_map={}
-        self.Qp_in_Q={ii: list(self.Qsites).index(qpidx) for ii,qpidx in enumerate(self.Qprime)}
+        self.qsite_id_to_idx = {
+            site_id: i for i, site_id in enumerate(self.Qsites)
+        }
+
+        self.Qp_in_Q = {
+            ii: self.qsite_id_to_idx[qpidx]
+            for ii, qpidx in enumerate(self.Qprime)
+        }
         
         self.Ncore=Ncore
         self.convergence_tol = convergence_tol
@@ -76,7 +92,6 @@ class FSC:
             "timing_total": [],
         }
         self.snapshots = {}
-        self.dashboard_sites = None
 
         if ifinitial:
             if FL_pinning:
@@ -164,11 +179,13 @@ class FSC:
         #initialize the site map between Qsysetm and kwant system
         qbuilder.site_map(self,system)
         #initialize the potential function Ufunc
+        #self.update_quantum_potential(U_cap=5*self.t)
         qbuilder.update_U(self,system)
         #initialize at the half-filling (since assume U=0 onsite)
         #self.ni[self.Qsites]+=0.5*np.ones(len(self.Qsites))
         #calculate the initial ildos
-        self.ildos = qbuilder.update_ildos(
+        
+        new_ildos = qbuilder.update_ildos(
             self,
             system,
             M=256,
@@ -176,32 +193,50 @@ class FSC:
             kernel="jackson",
             **kwarg
         )
-        self.init_dashboard_sites()
+
+        # initialize full LDOS storage on global Qsites grid
+        nq = len(self.Qsites)
+        nE = len(self.E_global)
+        self.ildos = np.zeros((nq, 2, nE), dtype=float)
+
+        # fill energy axis everywhere
+        self.ildos[:, 0, :] = self.E_global[None, :]
+
+        # if quantum system is built on active region only, write back by site_id
+        q_active = self.qsystem.Qsite_ids  # ground truth ordering
+
+        for local_idx, site_id in enumerate(q_active):
+            global_idx = self.qsite_id_to_idx[site_id]
+            self.ildos[global_idx] = new_ildos[local_idx]
+
         print("FSC qparams:", self.qparams)
         print("QSystem params:", self.qsystem.qparams)
         print("The quantum problem has been initialized.")
 
 
-    def update_qparams(self,system,qparams,ifinitial=True):
-        qbuilder.update_qparams(self,qparams)
+    def update_qparams(self, system, qparams, ifinitial=True):
+        # update FSC-side params
+        self.qparams = {**self.qparams, **qparams}
+
+        # update quantum system as well
+        self.qsystem.update_qparams(qparams)
+
         if ifinitial:
             self.initial_Quantum(system)
 
 
     def update_Quantum(self, system, **kwarg):
         pre_ildos = self.ildos.copy()
+
         qbuilder.update_U(self, system)
-
         new_ildos = qbuilder.update_ildos(self, system, **kwarg)
-        q_indices = list(self.Qp_in_Q.values())
 
-        for dest, src in zip(q_indices, new_ildos):
-            self.ildos[dest] = src
+        # write active-region LDOS back into full global container
+        for local_idx, site_id in enumerate(self.Qprime):
+            global_idx = self.qsite_id_to_idx[site_id]
+            self.ildos[global_idx] = new_ildos[local_idx]
 
-        curr_ildos = np.asarray(self.ildos, dtype=float)
-        prev_ildos = np.asarray(pre_ildos, dtype=float)
-
-        dildos = curr_ildos - prev_ildos
+        dildos = self.ildos - pre_ildos
         self.log["ildos_maxdiff"].append(np.max(np.abs(dildos)))
 
 
@@ -209,8 +244,8 @@ class FSC:
     def local_solver(self):
         dUdn=solvers.local_solver(self)
         print(np.mean(dUdn[0]),np.mean(dUdn[1]))
-        self.Ui[self.Qprime]+=dUdn[0]
-        self.ni[self.Qprime]+=dUdn[1]
+        self.Ui[self.Qprime]+=0.5*dUdn[0]
+        self.ni[self.Qprime]+=0.5*dUdn[1]
 
     def update_BC(self,syst,name,prop,value,ifinitial=False,FL_pinning=True):
         for site in list(self.sites.values()):
@@ -228,100 +263,93 @@ class FSC:
     def update_Qprime(self, tol=1e-7):
         Qprime_old = self.Qprime.copy()
         Qprime_new = solvers.update_Qprime(self, tol)
+
         self.Qprime = Qprime_new
+
+        # 🔥 CRITICAL
+        self.qsystem.update_active_sites(self.Qprime)
 
         if len(Qprime_new) != len(Qprime_old):
             psolver.calculate_delta(self)
             self.update_Poisson()
             self.Ci = psolver.solve_capacitance(self)
 
-        self.Qp_in_Q = {ii: list(self.Qsites).index(qpidx) for ii, qpidx in enumerate(self.Qprime)}
+        self.Qp_in_Q = {
+            ii: self.qsite_id_to_idx[qpidx]
+            for ii, qpidx in enumerate(self.Qprime)
+        }
         
 
     def solve(
         self,
         system,
-        save=None,
-        dashboard_every=5,
+        save=True,
         snapshot_every=5,
+        ldos_method="TF",
+        snapshot_mode="iteration",   # "iteration" or "step"
+        snapshot_folder="fsc_logs",
         max_total_iter=30,
-        show_dashboard=False,
+        save_ildos=True,
         **kwarg
     ):
-        """
-        Run the self-consistent iteration loop until convergence or max iterations.
-
-        Parameters
-        ----------
-        system : object
-            Underlying system object.
-        save : str or None
-            Optional filename for saving history.
-        dashboard_every : int
-            Plot dashboard every N iterations if show_dashboard=True.
-        snapshot_every : int
-            Save internal snapshots every N iterations.
-        max_total_iter : int
-            Hard cap on total FSC iterations.
-        show_dashboard : bool
-            Whether to plot dashboard during solve.
-        **kwarg :
-            Passed to update_Quantum / qbuilder.update_ildos
-        """
         import time
+        from IPython.display import clear_output
+
+        # save static metadata once
+        if save:
+            self.save_static_reference(snapshot_folder)
 
         # initialize active region once
         self.update_Qprime()
 
         iter_num = [0, 0, 0]   # [Qprime updates, Poisson updates, Quantum updates]
 
-        if save is not None:
-            Uis = []
-            nis = []
-            ildoss = []
-            cut_idx = [
-                qidx for qidx, idx in enumerate(self.Qsites)
-                if np.abs(self.sites[idx].coordinates[0]) < 0.005
-                and self.sites[idx].material == 'Qsystem'
-            ]
-            ildoss = self.ildos[cut_idx]
-
         while True:
             it = sum(iter_num)
             t_iter0 = time.perf_counter()
 
-            print("The iteration has been conducted for", iter_num, "times.")
+            print("Iteration counts:", iter_num)
             if hasattr(self, "print_iteration_summary"):
                 self.print_iteration_summary(it)
 
-            if snapshot_every is not None and snapshot_every > 0:
-                if it % snapshot_every == 0:
-                    if hasattr(self, "save_snapshot"):
-                        self.save_snapshot(it)
+            # ----------------------------
+            # Iteration-level snapshot
+            # ----------------------------
+            if save and snapshot_mode == "iteration":
+                if snapshot_every is not None and snapshot_every > 0:
+                    if it % snapshot_every == 0:
+                        self.save_snapshot(
+                            f"iter_{it:04d}",
+                            folder=snapshot_folder,
+                            save_ildos=save_ildos
+                        )
 
-            if show_dashboard and dashboard_every is not None and dashboard_every > 0:
-                if it % dashboard_every == 0:
-                    if hasattr(self, "plot_dashboard"):
-                        clear_output(wait=True)
-                        self.plot_dashboard(it)
-
-            if save is not None:
-                Uis.append(self.Ui.copy())
-                nis.append(self.ni.copy())
-                self.save_Uini(Uis, nis, ildoss, filename=save)
-
-            # ---------------------------------
+            # =================================
             # Step 1: local electrostatic update
-            # ---------------------------------
+            # =================================
             self.local_solver()
 
-            # ---------------------------------
+            if save and snapshot_mode == "step":
+                self.save_snapshot(
+                    f"iter_{it:04d}_local",
+                    folder=snapshot_folder,
+                    save_ildos=save_ildos
+                )
+
+            # =================================
             # Step 2: update Qprime partition
-            # ---------------------------------
+            # =================================
             qprime_before = len(self.Qprime)
             self.update_Qprime()
             qprime_after = len(self.Qprime)
             self.log["Qprime_len"].append(qprime_after)
+
+            if save and snapshot_mode == "step":
+                self.save_snapshot(
+                    f"iter_{it:04d}_qprime",
+                    folder=snapshot_folder,
+                    save_ildos=save_ildos
+                )
 
             if qprime_after != qprime_before:
                 psolver.calculate_delta(self)
@@ -338,9 +366,9 @@ class FSC:
                     break
                 continue
 
-            # ---------------------------------
+            # =================================
             # Step 3: Poisson update if needed
-            # ---------------------------------
+            # =================================
             need_poisson = (
                 len(self.log["ni_maxdiff"]) == 0
                 or self.log["ni_maxdiff"][-1] > self.convergence_tol
@@ -351,6 +379,13 @@ class FSC:
                 self.update_Poisson()
                 self.log["timing_poisson"].append(time.perf_counter() - t0)
 
+                if save and snapshot_mode == "step":
+                    self.save_snapshot(
+                        f"iter_{it:04d}_poisson",
+                        folder=snapshot_folder,
+                        save_ildos=save_ildos
+                    )
+
                 iter_num[1] += 1
                 self.log["timing_total"].append(time.perf_counter() - t_iter0)
 
@@ -359,115 +394,51 @@ class FSC:
                     break
                 continue
 
-            # one more Poisson relaxation before quantum step
+            # extra Poisson relaxation
             t0 = time.perf_counter()
             self.update_Poisson()
             self.log["timing_poisson"].append(time.perf_counter() - t0)
 
-            # ---------------------------------
+            if save and snapshot_mode == "step":
+                self.save_snapshot(
+                    f"iter_{it:04d}_poisson_relax",
+                    folder=snapshot_folder,
+                    save_ildos=save_ildos
+                )
+
+            # =================================
             # Step 4: Quantum update
-            # ---------------------------------
+            # =================================
             if sum(iter_num) < max_total_iter:
                 t0 = time.perf_counter()
-                self.update_Quantum(
-                    system,
-                    approx="kmeanssample",
-                    Ncore=self.Ncore,
-                    num_sample=int(5 * self.Ncore),
-                    **kwarg
-                )
+                quantum_kwargs = {
+                    "approx": ldos_method,
+                    "Ncore": self.Ncore,
+                    **kwarg,
+                }
+
+                if ldos_method == "kmeanssample":
+                    quantum_kwargs["num_sample"] = int(5 * self.Ncore)
+
+                self.update_Quantum(system, **quantum_kwargs)
+
                 self.log["timing_quantum"].append(time.perf_counter() - t0)
 
-                if save is not None:
-                    ildoss = self.ildos[cut_idx]
+                if save and snapshot_mode == "step":
+                    self.save_snapshot(
+                        f"iter_{it:04d}_quantum",
+                        folder=snapshot_folder,
+                        save_ildos=save_ildos
+                    )
 
                 iter_num[2] += 1
                 self.log["timing_total"].append(time.perf_counter() - t_iter0)
                 continue
+
             else:
-                print("The FSC has been solved.")
+                print("FSC converged / stopped.")
                 self.log["timing_total"].append(time.perf_counter() - t_iter0)
                 break
-    # def solve(self,system,save=None,**kwarg):
-    #     """
-    #     Run the self-consistent iteration loop until convergence or until max_iter is reached.
-    #     The loop structure follows Fig.8 of the paper:
-    #       - Step I: Update the Q/Q' partition (remove depleted regions)
-    #       - Step II: Relax the Poisson (PAA) update (update potential)
-    #       - Step III: Relax the quantum (QAA) update (update ILDOS/density)
-    #     """
-    #     #initialize the problem by conducting iteration twice:
-    #     initial_loop=0
-    #     self.update_Qprime()
-    #     # while initial_loop<2:
-    #     #     self.local_solver()
-    #     #     self.update_Qprime()
-    #     #     psolver.calculate_delta(self)
-    #     #     self.Ci=psolver.solve_capacitance(self)
-    #     #     initial_loop+=1
-    #     iter_num=[0,0,0]
-    #     # self.update_Poisson()
-    #     #self.update_Quantum(system)
-    #     if save is not None:
-    #         Uis=[]
-    #         nis=[]
-    #         ildoss=[]
-    #         cut_idx=cut_idx=[qidx for qidx,idx in enumerate(self.Qsites) if np.abs(self.sites[idx].coordinates[0])<0.005 and self.sites[idx].material=='Qsystem']
-    #         ildoss=self.ildos[cut_idx]
-    #     while True:
-    #         t_iter0 = time.perf_counter()
-    #         it = sum(iter_num)
-
-    #         print("The iteration has been conducted for ", iter_num, "times.")
-    #         self.print_iteration_summary(it)
-
-    #         if it % 5 == 0:
-    #             self.save_snapshot(it)
-    #             self.plot_dashboard(it)
-
-
-    #         if save is not None:
-    #             Uis.append(self.Ui.copy())
-    #             nis.append(self.ni.copy())
-    #             self.save_Uini(Uis,nis,ildoss,filename=save)
-            
-    #         self.local_solver()
-
-    #         t0 = time.perf_counter()
-    #         self.local_solver()
-    #         t_local = time.perf_counter() - t0
-
-    #         self.update_Qprime()
-    #         if self.log['Qprime_len'][-1]-self.log['Qprime_len'][-2]!=0:
-    #             psolver.calculate_delta(self)
-    #             self.Ci=psolver.solve_capacitance(self)
-    #             iter_num[0]+=1
-    #             continue
-    #         else:
-    #             pass
-            
-    #         if self.log["ni_maxdiff"] and self.log["ni_maxdiff"][-1] > self.convergence_tol:
-    #             self.update_Poisson()
-    #             iter_num[1]+=1
-    #             continue
-    #         else:
-    #             pass 
-
-    #         t0 = time.perf_counter()
-    #         self.update_Poisson()
-    #         t_poisson = time.perf_counter() - t0
-    #         self.log["timing_poisson"].append(t_poisson) 
-
-
-    #         # if np.abs(self.log['ildos_error'][-1])>self.convergence_tol:
-    #         if np.sum(iter_num)< 30:
-    #             self.update_Quantum(system,approx="kmeanssample",Ncore=self.Ncore,num_sample=int(5*self.Ncore),**kwarg)
-    #             ildoss=self.ildos[cut_idx]
-    #             iter_num[2]+=1
-    #             continue
-    #         else:
-    #             print("The FSC has been solved.")
-    #             break
             
 
     def save_Uini(self,Uis,nis,ildoss,filename):
@@ -531,7 +502,7 @@ class FSC:
         """
         fig, ax = plt.subplots(figsize=(10, 8))
 
-        coords = np.array([site.coordinates for site in self.sites.values()])[self.Qsites]
+        coords = np.array([self.sites[idx].coordinates for idx in self.Qsites])
         prop_values = np.array(prop_values)
 
         cmap = cm.viridis
@@ -553,40 +524,36 @@ class FSC:
     
     def plot_Hamiltonian(self, ax=None):
         """
-        Plot the Hamiltonian of the quantum system in 2D.
-
-        Sites are plotted as dots colored by onsite potential.
-        Hoppings are plotted as lines colored by Re(H_ij).
+        Plot Hamiltonian on the ACTIVE quantum system (Qprime).
         """
 
-        import matplotlib.pyplot as plt
-        import matplotlib.cm as cm
-        import matplotlib.colors as mcolors
-        import numpy as np
-
         if ax is None:
-            fig, ax = plt.subplots(figsize=(8,8))
+            fig, ax = plt.subplots(figsize=(8, 8))
 
-        # Hamiltonian
+        # --- active Hamiltonian ---
         H = self.qsystem.get_hamiltonian().tocsr()
 
-        # Qsystem site coordinates
-        coords = np.array([self.sites[idx].coordinates for idx in self.Qsites])
+        # 🔥 CRITICAL: use ACTIVE site ordering
+        q_ids = self.qsystem.Qsite_ids
+
+        coords = np.array(
+            [self.sites[sid].coordinates for sid in q_ids],
+            dtype=float
+        )
         xy = coords[:, :2]
 
-        # onsite potential
+        # --- onsite ---
         onsite = H.diagonal().real
 
-        # --- plot sites ---
         norm_sites = mcolors.Normalize(vmin=onsite.min(), vmax=onsite.max())
         cmap_sites = cm.viridis
 
         sc = ax.scatter(
-            xy[:,0],
-            xy[:,1],
+            xy[:, 0],
+            xy[:, 1],
             c=onsite,
             cmap=cmap_sites,
-            s=30,
+            s=40,
             norm=norm_sites,
             zorder=3
         )
@@ -594,77 +561,104 @@ class FSC:
         cbar = plt.colorbar(sc, ax=ax, pad=0.02)
         cbar.set_label("Onsite potential")
 
-        # --- extract hoppings ---
+        # --- hoppings ---
         rows, cols = H.nonzero()
 
-        mask = rows < cols   # avoid double plotting
+        mask = rows < cols
         rows = rows[mask]
         cols = cols[mask]
 
-        hop = H[rows, cols].A1.real
+        hop = H[rows, cols].A1
 
-        norm_hop = mcolors.Normalize(vmin=hop.min(), vmax=hop.max())
-        cmap_hop = cm.coolwarm
+        # 🔥 better: plot PHASE, not real part
+        hop_phase = np.angle(hop)
 
-        # --- plot hopping lines ---
-        for i, j, t in zip(rows, cols, hop):
+        norm_hop = mcolors.Normalize(vmin=-np.pi, vmax=np.pi)
+        cmap_hop = cm.twilight
 
-            x = [xy[i,0], xy[j,0]]
-            y = [xy[i,1], xy[j,1]]
+        for i, j, phase in zip(rows, cols, hop_phase):
+
+            x = [xy[i, 0], xy[j, 0]]
+            y = [xy[i, 1], xy[j, 1]]
 
             ax.plot(
                 x,
                 y,
-                color=cmap_hop(norm_hop(t)),
-                linewidth=1.0,
-                alpha=0.8,
+                color=cmap_hop(norm_hop(phase)),
+                linewidth=1.5,
+                alpha=0.9,
                 zorder=1
             )
 
         sm = cm.ScalarMappable(norm=norm_hop, cmap=cmap_hop)
         sm.set_array([])
         cbar2 = plt.colorbar(sm, ax=ax, pad=0.08)
-        cbar2.set_label("Re(Hopping)")
+        cbar2.set_label("arg(Hopping)")
 
         ax.set_aspect('equal')
         ax.set_xlabel("x")
         ax.set_ylabel("y")
-        ax.set_title("Quantum Hamiltonian")
+        ax.set_title("Active Quantum Hamiltonian (Qprime)")
 
         plt.show()
 
+    def rebuild_active_qsystem(self):
+
+        print("🔄 Updating active Hamiltonian (Qprime)")
+
+        self.qsystem.update_active_sites(self.Qprime)
+
+        # update mapping
+        self.Qp_in_Q = {
+            ii: self.qsite_id_to_idx[sid]
+            for ii, sid in enumerate(self.Qprime)
+        }
 ########debug log info############        
-    def save_snapshot(self, it):
-        snap = {
+    def save_snapshot(self, tag, folder="fsc_logs", save_ildos=True):
+        import os
+        import numpy as np
+
+        os.makedirs(folder, exist_ok=True)
+
+        params = self.collect_runtime_params()
+        #self.energy_bounds = self.qsystem.get_energy_bounds()
+
+        payload = {
+            "tag": tag,
             "Ui": self.Ui.copy(),
             "ni": self.ni.copy(),
-            "Qprime": self.Qprime.copy(),
+            "Qprime": np.array(self.Qprime, dtype=int),
+            "Qsites": np.array(self.Qsites, dtype=int),
+            "Ci": np.array(self.Ci, dtype=float) if self.Ci is not None else np.array([]),
+            "params": np.array([params], dtype=object),
+            "log": np.array([self.log], dtype=object),
+            "energy_bounds": np.array(self.energy_bounds, dtype=float) if self.energy_bounds is not None else np.array([]),
         }
 
-        if self.ildos is not None and self.dashboard_sites is not None:
-            snap["ldos_sites"] = {}
-            for site in self.dashboard_sites:
-                try:
-                    snap["ldos_sites"][site] = np.array(self.ildos[site], dtype=object)
-                except Exception:
-                    pass
+        if save_ildos and self.ildos is not None:
+            try:
+                payload["ildos"] = np.asarray(self.ildos, dtype=float)
+            except Exception:
+                # fallback: object if some branch still returns non-uniform structure
+                payload["ildos"] = np.array(self.ildos, dtype=object)
 
-        self.snapshots[it] = snap
+        np.savez(os.path.join(folder, f"{tag}.npz"), **payload)
 
     def print_iteration_summary(self, iter_num):
         print(f"\n--- Iteration {iter_num} ---")
         print(f"Qprime size   : {len(self.Qprime)}")
 
-        if self.log["Ui_maxdiff"]:
+        if self.log.get("Ui_maxdiff"):
             print(f"max |ΔU|      : {self.log['Ui_maxdiff'][-1]:.3e}")
-            print(f"L2(ΔU)        : {self.log['Ui_l2diff'][-1]:.3e}")
-
-        if self.log["ni_maxdiff"]:
+        if self.log.get("ni_maxdiff"):
             print(f"max |Δn|      : {self.log['ni_maxdiff'][-1]:.3e}")
-            print(f"L2(Δn)        : {self.log['ni_l2diff'][-1]:.3e}")
-
-        if self.log["ildos_maxdiff"]:
+        if self.log.get("ildos_maxdiff"):
             print(f"max |ΔILDOS|  : {self.log['ildos_maxdiff'][-1]:.3e}")
+
+        if self.log.get("timing_poisson"):
+            print(f"last Poisson  : {self.log['timing_poisson'][-1]:.3f} s")
+        if self.log.get("timing_quantum"):
+            print(f"last Quantum  : {self.log['timing_quantum'][-1]:.3f} s")
 
     def plot_convergence(self):
 
@@ -684,84 +678,90 @@ class FSC:
         plt.tight_layout()
         plt.show()
 
-    def init_dashboard_sites(self, n_sites=4):
-        coords = np.array([self.sites[idx].coordinates[:2] for idx in self.Qsites])
 
-        # pick corners + center approximately
-        center = coords.mean(axis=0)
-        d_center = np.linalg.norm(coords - center, axis=1)
-        center_idx = np.argmin(d_center)
+    def collect_params(self):
+        params = {}
 
-        x_min_idx = np.argmin(coords[:, 0])
-        x_max_idx = np.argmax(coords[:, 0])
-        y_min_idx = np.argmin(coords[:, 1])
-        y_max_idx = np.argmax(coords[:, 1])
+        # magnetic field / phase
+        if hasattr(self, "phi"):
+            params["phi"] = self.phi
 
-        chosen = list(dict.fromkeys([center_idx, x_min_idx, x_max_idx, y_min_idx, y_max_idx]))
-        self.dashboard_sites = chosen[:n_sites]
+        # gate potentials
+        gate_potentials = {}
+        for idx, site in self.sites.items():
+            if site.material in ["gate", "back_gate"]:
+                gate_potentials[idx] = site.potential
 
-    def plot_dashboard(self, it=None):
+        params["gate_potentials"] = gate_potentials
 
-        fig, axes = plt.subplots(2, 2, figsize=(12, 10))
-        ax_conv, ax_U, ax_n, ax_ldos = axes.ravel()
+        # optional: global settings
+        if hasattr(self, "geometry_params"):
+            params["geometry_params"] = self.geometry_params
 
-        # ----------------------------
-        # Panel 1: convergence curves
-        # ----------------------------
-        if len(self.log["Ui_maxdiff"]) > 0:
-            ax_conv.plot(self.log["Ui_maxdiff"], label="max |ΔU|")
-        if len(self.log["ni_maxdiff"]) > 0:
-            ax_conv.plot(self.log["ni_maxdiff"], label="max |Δn|")
-        if len(self.log["ildos_maxdiff"]) > 0:
-            ax_conv.plot(self.log["ildos_maxdiff"], label="max |ΔILDOS|")
+        if hasattr(self, "unit_cell_area"):
+            params["unit_cell_area"] = self.unit_cell_area
 
-        ax_conv.set_yscale("log")
-        ax_conv.set_title("Convergence")
-        ax_conv.legend()
+        if hasattr(self, "max_fill"):
+            params["max_fill"] = self.max_fill
 
-        # ----------------------------
-        # coordinates on Qsites
-        # ----------------------------
-        coords = np.array([self.sites[idx].coordinates[:2] for idx in self.Qsites])
+        return params
+    
+    def save_static_reference(self, folder="fsc_logs"):
+        import os
+        import numpy as np
 
-        # ----------------------------
-        # Panel 2: Ui
-        # ----------------------------
-        Ui_q = self.Ui[self.Qsites]
-        sc1 = ax_U.scatter(coords[:, 0], coords[:, 1], c=Ui_q, cmap="coolwarm", s=30)
-        fig.colorbar(sc1, ax=ax_U, pad=0.02)
-        ax_U.set_aspect("equal")
-        ax_U.set_title("Ui on Qsites")
+        os.makedirs(folder, exist_ok=True)
 
-        # ----------------------------
-        # Panel 3: ni
-        # ----------------------------
-        ni_q = self.ni[self.Qsites]
-        sc2 = ax_n.scatter(coords[:, 0], coords[:, 1], c=ni_q, cmap="viridis", s=30)
-        fig.colorbar(sc2, ax=ax_n, pad=0.02)
-        ax_n.set_aspect("equal")
-        ax_n.set_title("ni on Qsites")
+        coords_q = np.array(
+            [self.sites[idx].coordinates[:2] for idx in self.Qsites],
+            dtype=float
+        )
 
-        # ----------------------------
-        # Panel 4: tracked LDOS
-        # ----------------------------
-        if self.ildos is not None and self.dashboard_sites is not None:
-            for site in self.dashboard_sites:
-                try:
-                    E = np.asarray(self.ildos[site][0], dtype=float)
-                    rho = np.asarray(self.ildos[site][1], dtype=float)
-                    ax_ldos.plot(E, rho, label=f"site {site}")
-                except Exception:
-                    pass
+        gate_info = {}
+        for idx, site in self.sites.items():
+            mat = getattr(site, "material", None)
+            if mat in ["gate", "back_gate", "top_gate"]:
+                gate_info[int(idx)] = {
+                    "material": mat,
+                    "potential": float(site.potential),
+                    "coordinates": list(site.coordinates),
+                }
 
-        ax_ldos.set_title("Tracked LDOS")
-        ax_ldos.set_xlabel("Energy")
-        ax_ldos.set_ylabel("LDOS")
-        if self.dashboard_sites is not None:
-            ax_ldos.legend(fontsize=8)
+        # sanitize geometry_params: replace callables with readable names
+        geometry_params_clean = {}
+        for k, v in self.geometry_params.items():
+            if callable(v):
+                geometry_params_clean[k] = f"<callable:{getattr(v, '__name__', 'anonymous')}>"
+            else:
+                geometry_params_clean[k] = v
 
-        if it is not None:
-            fig.suptitle(f"FSC dashboard — iteration {it}", fontsize=14)
+        static_data = {
+            "Qsites": np.array(self.Qsites, dtype=int),
+            "coords_q": coords_q,
+            "geometry_params": geometry_params_clean,
+            "unit_cell_area": float(self.unit_cell_area),
+            "max_fill": float(self.max_fill),
+            "gate_info": gate_info,
+        }
 
-        plt.tight_layout()
-        plt.show()
+        np.savez(
+            os.path.join(folder, "run_static.npz"),
+            static_data=np.array([static_data], dtype=object)
+        )
+
+    def collect_runtime_params(self):
+        params = {}
+
+        if hasattr(self, "qparams"):
+            params["phi"] = self.qparams.get("phi", None)
+        else:
+            params["phi"] = None
+
+        gate_potentials = {}
+        for idx, site in self.sites.items():
+            mat = getattr(site, "material", None)
+            if mat in ["gate", "back_gate", "top_gate"]:
+                gate_potentials[int(idx)] = float(site.potential)
+
+        params["gate_potentials"] = gate_potentials
+        return params

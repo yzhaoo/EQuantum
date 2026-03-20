@@ -149,11 +149,41 @@ class System:
                 config_data = json.load(f)
             return config_data
     def update_mat_indices(self):
+        # --- rebuild material classification ---
         self.initialize_material_indices()
-        self.Qsites=self.material_indices['Qsystem']
-        #initialize the site type
-        self.N_indices = np.array([i for i, site in self.sites.items() if site.BCtype == 1])
-        self.D_indices = np.array([i for i, site in self.sites.items() if site.BCtype == 0])
+
+        # --- Qsites: enforce deterministic, integer ordering ---
+        self.Qsites = np.array(
+            sorted(self.material_indices.get('Qsystem', [])),
+            dtype=int
+        )
+
+        # --- mapping: global site_id → Q-index (VERY IMPORTANT) ---
+        self.qsite_id_to_idx = {
+            site_id: i for i, site_id in enumerate(self.Qsites)
+        }
+
+        # --- boundary condition partition ---
+        self.N_indices = np.array(
+            [i for i, site in self.sites.items() if site.BCtype == 1],
+            dtype=int
+        )
+
+        self.D_indices = np.array(
+            [i for i, site in self.sites.items() if site.BCtype == 0],
+            dtype=int
+        )
+
+        # --- sanity checks (highly recommended) ---
+        assert len(set(self.N_indices).intersection(self.D_indices)) == 0, \
+            "N_indices and D_indices overlap!"
+
+        assert len(self.N_indices) + len(self.D_indices) == len(self.sites), \
+            "N_indices + D_indices != total number of sites"
+
+        # optional: ensure Qsites are valid
+        assert all(site_id in self.sites for site_id in self.Qsites), \
+            "Qsites contain invalid site IDs"
 
     def initialize_material_indices(self):
         """

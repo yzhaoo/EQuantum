@@ -49,15 +49,29 @@ def update_qparams(fsc, qparams):
 
 def site_map(fsc, syst):
     """
-    Build map between Q-sites and backend site indices.
+    Build mapping between Qsites and Hamiltonian indices.
     """
+
     builder = syst.quantum_builder
 
     if builder == "kwant":
         ksolver.kwant_site_map_from_Qsites(fsc, syst)
+
     elif builder == "default":
-        # map from Hamiltonian index -> original Qsite id
-        fsc.Qsites_map = {idx: qidx for idx, qidx in enumerate(fsc.Qsites)}
+
+        # index → site_id
+        fsc.idx_to_qsite = {
+            i: site_id for i, site_id in enumerate(fsc.Qsites)
+        }
+
+        # site_id → index (IMPORTANT)
+        fsc.qsite_to_idx = {
+            site_id: i for i, site_id in enumerate(fsc.Qsites)
+        }
+
+        # keep legacy name if other code uses it
+        fsc.Qsites_map = fsc.idx_to_qsite
+
     else:
         raise ValueError(f"Unknown quantum builder: {builder}")
 
