@@ -244,8 +244,8 @@ class FSC:
     def local_solver(self):
         dUdn=solvers.local_solver(self)
         print(np.mean(dUdn[0]),np.mean(dUdn[1]))
-        self.Ui[self.Qprime]+=0.5*dUdn[0]
-        self.ni[self.Qprime]+=0.5*dUdn[1]
+        self.Ui[self.Qprime]+=dUdn[0]
+        self.ni[self.Qprime]+=dUdn[1]
 
     def update_BC(self,syst,name,prop,value,ifinitial=False,FL_pinning=True):
         for site in list(self.sites.values()):

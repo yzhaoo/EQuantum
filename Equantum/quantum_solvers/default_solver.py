@@ -3,6 +3,7 @@ from scipy.sparse import lil_matrix, csr_matrix
 from functools import partial
 from joblib import Parallel, delayed
 import scipy.sparse.linalg as spla
+import scipy.linalg as sla
 from tqdm import tqdm
 from functools import partial
 from .kpm_solver import kpm_dos, kpm_ldos, kpm_dos_many, kpm_dos_from_ldos
@@ -250,7 +251,28 @@ class QuantumSystem:
         elif approx == "kmeanssample":
             # already normalized per cluster inside sample_ldos
             dataall = self.sample_ldos(fsc, Ncore=Ncore, M=M, **kwargs)
+        elif approx == "ED":
+            H = self.get_hamiltonian()
+
+            eta = kwargs.pop("eta", 0.02)
+            broadening = kwargs.pop("broadening", "gaussian")
+
+            E_ed, rho_all = ed_ldos(
+                H,
+                energies=Erange,
+                eta=eta,
+                broadening=broadening
+            )
+
+            dataall = np.stack(
+                [
+                    project_ldos_to_global_grid(E_ed, rho_all[ii], fsc.E_global, fsc.max_fill)
+                    for ii in range(self.N)
+                ],
+                axis=0
+            )
         else:
+            print("No approximation method has been selected, use exact kpm by default.")
             H = self.get_hamiltonian()
 
             if Ncore > 1:
@@ -511,3 +533,48 @@ def mag_hop_honeycomb(t,to_site,from_site,phi,lat_spacing):
 def onsite_pot(site,Ufunc):
         return Ufunc(site)
 
+
+def ed_ldos(H, energies, eta=0.02, broadening="gaussian"):
+    """
+    Exact-diagonalization LDOS for all sites.
+
+    Parameters
+    ----------
+    H : sparse or dense matrix
+        Hamiltonian of shape (N, N)
+    energies : 1D array
+        Energy grid
+    eta : float
+        Broadening width
+    broadening : {"gaussian", "lorentzian"}
+        Type of spectral broadening
+
+    Returns
+    -------
+    E : ndarray, shape (nE,)
+    rho_all : ndarray, shape (N, nE)
+        LDOS for every site on the energy grid
+    """
+    if hasattr(H, "toarray"):
+        H = H.toarray()
+    else:
+        H = np.asarray(H)
+
+    evals, evecs = sla.eigh(H)
+    energies = np.asarray(energies, dtype=float)
+
+    weights = np.abs(evecs) ** 2   # shape (N, Nstates)
+
+    dE = energies[None, :] - evals[:, None]   # shape (Nstates, nE)
+
+    if broadening == "gaussian":
+        kernel = np.exp(-0.5 * (dE / eta) ** 2) / (np.sqrt(2 * np.pi) * eta)
+    elif broadening == "lorentzian":
+        kernel = (eta / np.pi) / (dE**2 + eta**2)
+    else:
+        raise ValueError("broadening must be 'gaussian' or 'lorentzian'")
+
+    # rho_all[i, E] = sum_n |psi_n(i)|^2 * kernel_n(E)
+    rho_all = weights @ kernel   # shape (N, nE)
+
+    return energies, rho_all
