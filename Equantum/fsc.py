@@ -370,8 +370,8 @@ class FSC:
             # Step 3: Poisson update if needed
             # =================================
             need_poisson = (
-                len(self.log["ni_maxdiff"]) == 0
-                or self.log["ni_maxdiff"][-1] > self.convergence_tol
+                len(self.log["ni_l2diff"]) == 0
+                or self.log["ni_l2diff"][-1] > self.convergence_tol
             )
 
             if need_poisson:
@@ -650,8 +650,12 @@ class FSC:
 
         if self.log.get("Ui_maxdiff"):
             print(f"max |ΔU|      : {self.log['Ui_maxdiff'][-1]:.3e}")
+        if self.log.get("Ui_l2diff"):
+            print(f"max |ΔU|      : {self.log['Ui_l2diff'][-1]:.3e}")
         if self.log.get("ni_maxdiff"):
             print(f"max |Δn|      : {self.log['ni_maxdiff'][-1]:.3e}")
+        if self.log.get("ni_l2diff"):
+            print(f"max |Δn|      : {self.log['ni_l2diff'][-1]:.3e}")
         if self.log.get("ildos_maxdiff"):
             print(f"max |ΔILDOS|  : {self.log['ildos_maxdiff'][-1]:.3e}")
 
