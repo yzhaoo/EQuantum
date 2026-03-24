@@ -28,8 +28,13 @@ else:
 static = np.load(os.path.join(log_folder, "run_static.npz"), allow_pickle=True)
 static_data = static["static_data"][0]
 
+# Quantum-layer info
 Qsites = np.array(static_data["Qsites"], dtype=int)
-coords = np.array(static_data["coords_q"], dtype=float)
+coords_q = np.array(static_data["coords_q"], dtype=float)   # (x, y)
+
+# Full-system info for surface cuts
+site_ids_all = np.array(static_data["site_ids_all"], dtype=int)
+coords_all = np.array(static_data["coords_all"], dtype=float)  # (x, y, z)
 
 # ----------------------------
 # Load snapshots
@@ -84,7 +89,7 @@ def set_mapper_range_from_qprime(vals, qmask):
 
 def ldos_at_energy(data, energy_mode="Ui"):
     """
-    Evaluate LDOS on each site at either:
+    Evaluate LDOS on each quantum site at either:
     - energy_mode = "Ui"  -> rho(E = Ui_site)
     - energy_mode = "0"   -> rho(E = 0)
     """
@@ -117,6 +122,124 @@ def ldos_at_energy(data, energy_mode="Ui"):
 
     return vals
 
+def scalar_values_quantum(data, prop_name, snapshot_name):
+    qmask = qprime_mask_from_data(data)
+
+    if prop_name == "Ui":
+        vals = np.asarray(data["Ui"], dtype=float)[Qsites]
+
+    elif prop_name == "ni":
+        vals = np.asarray(data["ni"], dtype=float)[Qsites]
+
+    elif prop_name == "Ci":
+        vals = np.full(len(Qsites), np.nan, dtype=float)
+        Ci = np.asarray(data["Ci"], dtype=float)
+        Qp = np.asarray(data["Qprime"], dtype=int)
+        for i, s in enumerate(Qp[:len(Ci)]):
+            idx = np.where(Qsites == s)[0]
+            if len(idx):
+                vals[idx[0]] = Ci[i]
+
+    elif prop_name == "Qprime_mask":
+        vals = qmask.astype(float)
+
+    elif prop_name == "ΔUi":
+        prev = get_prev_snapshot(snapshot_name)
+        if prev is None:
+            vals = np.zeros(len(Qsites), dtype=float)
+        else:
+            prev_data = load_snapshot(prev)
+            vals = (
+                np.asarray(data["Ui"], dtype=float)[Qsites]
+                - np.asarray(prev_data["Ui"], dtype=float)[Qsites]
+            )
+
+    elif prop_name == "LDOS@0":
+        vals = ldos_at_energy(data, energy_mode="0")
+
+    elif prop_name == "LDOS@Ui":
+        vals = ldos_at_energy(data, energy_mode="Ui")
+
+    else:
+        vals = np.zeros(len(Qsites), dtype=float)
+
+    return vals
+
+def scalar_values_surface(data, prop_name, snapshot_name):
+    ids = site_ids_all
+
+    if prop_name == "Ui":
+        return np.asarray(data["Ui"], dtype=float)[ids]
+
+    elif prop_name == "ni":
+        return np.asarray(data["ni"], dtype=float)[ids]
+
+    elif prop_name == "ΔUi":
+        prev = get_prev_snapshot(snapshot_name)
+        if prev is None:
+            return np.zeros(len(ids), dtype=float)
+        prev_data = load_snapshot(prev)
+        return (
+            np.asarray(data["Ui"], dtype=float)[ids]
+            - np.asarray(prev_data["Ui"], dtype=float)[ids]
+        )
+
+    elif prop_name == "Ci":
+        vals = np.full(len(ids), np.nan, dtype=float)
+        Ci = np.asarray(data["Ci"], dtype=float)
+        Qp = np.asarray(data["Qprime"], dtype=int)
+        id_to_all = {sid: i for i, sid in enumerate(ids)}
+        for i, sid in enumerate(Qp[:len(Ci)]):
+            if sid in id_to_all:
+                vals[id_to_all[sid]] = Ci[i]
+        return vals
+
+    else:
+        return np.full(len(ids), np.nan, dtype=float)
+
+def get_surface_cut_indices(cut_direction, cut_center, cut_width):
+    """
+    Select all full-system sites in a slab.
+
+    cut_direction == "x": keep |y - cut_center| <= cut_width/2, plot (x, z)
+    cut_direction == "y": keep |x - cut_center| <= cut_width/2, plot (y, z)
+    """
+    x = coords_all[:, 0]
+    y = coords_all[:, 1]
+    z = coords_all[:, 2]
+
+    if cut_direction == "x":
+        mask = np.abs(y - cut_center) <= cut_width / 2
+        coord_along = x[mask]
+        coord_vert = z[mask]
+        idx = np.where(mask)[0]
+    else:
+        mask = np.abs(x - cut_center) <= cut_width / 2
+        coord_along = y[mask]
+        coord_vert = z[mask]
+        idx = np.where(mask)[0]
+
+    return idx, coord_along, coord_vert
+
+def get_quantum_line_cut_indices(cut_direction, cut_center, cut_width):
+    """
+    Select quantum-layer sites near a line cut in the 2D layer.
+    """
+    x = coords_q[:, 0]
+    y = coords_q[:, 1]
+
+    if cut_direction == "x":
+        mask = np.abs(y - cut_center) <= cut_width / 2
+        coord_along = x[mask]
+        idx = np.where(mask)[0]
+    else:
+        mask = np.abs(x - cut_center) <= cut_width / 2
+        coord_along = y[mask]
+        idx = np.where(mask)[0]
+
+    order = np.argsort(coord_along)
+    return idx[order], coord_along[order]
+
 # ----------------------------
 # Widgets
 # ----------------------------
@@ -124,7 +247,7 @@ snapshot_slider = pn.widgets.DiscreteSlider(
     name="Snapshot",
     options=snapshot_names,
     value=snapshot_names[0],
-    width=300
+    width=320
 )
 
 snapshot_player = pn.widgets.Player(
@@ -134,24 +257,54 @@ snapshot_player = pn.widgets.Player(
     value=0,
     interval=500,
     loop_policy="loop",
-    width=300
+    width=320
 )
 
+# Main left heatmap property
 prop_select = pn.widgets.Select(
-    name="Property",
+    name="Main heatmap",
     options=["Ui", "ni", "Ci", "Qprime_mask", "ΔUi", "LDOS@0", "LDOS@Ui"],
     value="Ui",
-    width=300
+    width=320
+)
+
+# Surface plot property
+surface_prop_select = pn.widgets.Select(
+    name="Surface property",
+    options=["Ui", "ni", "Ci", "ΔUi"],
+    value="Ui",
+    width=320
 )
 
 site_select = pn.widgets.IntInput(
     name="Site",
     value=int(Qsites[0]),
-    width=300
+    width=320
 )
 
-info_panel = pn.pane.Markdown("", width=300)
-bounds_panel = pn.pane.Markdown("", width=300)
+cut_direction_select = pn.widgets.Select(
+    name="Cut direction",
+    options=["x", "y"],
+    value="x",
+    width=320
+)
+
+cut_center_input = pn.widgets.FloatInput(
+    name="Cut center",
+    value=float(np.median(coords_q[:, 1])),
+    step=0.01,
+    width=320
+)
+
+cut_width_input = pn.widgets.FloatInput(
+    name="Cut width",
+    value=0.05,
+    step=0.01,
+    width=320
+)
+
+info_panel = pn.pane.Markdown("", width=320)
+bounds_panel = pn.pane.Markdown("", width=320)
 
 # ----------------------------
 # Bokeh sources
@@ -161,7 +314,7 @@ selected_source = ColumnDataSource(data=dict(x=[], y=[]))
 max_ui_source = ColumnDataSource(data=dict(x=[], y=[]))
 
 # ----------------------------
-# Plot setup
+# Main quantum heatmap
 # ----------------------------
 fig = figure(
     width=900,
@@ -213,55 +366,18 @@ def _slider_to_player(event):
 snapshot_slider.param.watch(_slider_to_player, "value")
 
 # ----------------------------
-# Update system plot
+# Update main heatmap
 # ----------------------------
 def update_system():
     data = load_snapshot(snapshot_slider.value)
     qmask = qprime_mask_from_data(data)
 
-    if prop_select.value == "Ui":
-        vals = np.asarray(data["Ui"], dtype=float)[Qsites]
-
-    elif prop_select.value == "ni":
-        vals = np.asarray(data["ni"], dtype=float)[Qsites]
-
-    elif prop_select.value == "Ci":
-        vals = np.full(len(Qsites), np.nan, dtype=float)
-        Ci = np.asarray(data["Ci"], dtype=float)
-        Qp = np.asarray(data["Qprime"], dtype=int)
-        for i, s in enumerate(Qp[:len(Ci)]):
-            idx = np.where(Qsites == s)[0]
-            if len(idx):
-                vals[idx[0]] = Ci[i]
-
-    elif prop_select.value == "Qprime_mask":
-        vals = qmask.astype(float)
-
-    elif prop_select.value == "ΔUi":
-        prev = get_prev_snapshot(snapshot_slider.value)
-        if prev is None:
-            vals = np.zeros(len(Qsites), dtype=float)
-        else:
-            prev_data = load_snapshot(prev)
-            vals = (
-                np.asarray(data["Ui"], dtype=float)[Qsites]
-                - np.asarray(prev_data["Ui"], dtype=float)[Qsites]
-            )
-
-    elif prop_select.value == "LDOS@0":
-        vals = ldos_at_energy(data, energy_mode="0")
-
-    elif prop_select.value == "LDOS@Ui":
-        vals = ldos_at_energy(data, energy_mode="Ui")
-
-    else:
-        vals = np.zeros(len(Qsites), dtype=float)
-
+    vals = scalar_values_quantum(data, prop_select.value, snapshot_slider.value)
     set_mapper_range_from_qprime(vals, qmask)
 
     main_source.data = dict(
-        x=coords[:, 0],
-        y=coords[:, 1],
+        x=coords_q[:, 0],
+        y=coords_q[:, 1],
         site=Qsites,
         value=vals
     )
@@ -269,8 +385,8 @@ def update_system():
     Ui_vals = np.asarray(data["Ui"], dtype=float)[Qsites]
     max_idx = int(np.argmax(Ui_vals))
     max_ui_source.data = dict(
-        x=[coords[max_idx, 0]],
-        y=[coords[max_idx, 1]]
+        x=[coords_q[max_idx, 0]],
+        y=[coords_q[max_idx, 1]]
     )
 
     update_selected_marker()
@@ -303,8 +419,8 @@ def update_selected_marker():
         return
     idx = idx[0]
     selected_source.data = dict(
-        x=[coords[idx, 0]],
-        y=[coords[idx, 1]]
+        x=[coords_q[idx, 0]],
+        y=[coords_q[idx, 1]]
     )
 
 def on_click(attr, old, new):
@@ -315,7 +431,7 @@ def on_click(attr, old, new):
 renderer.data_source.selected.on_change("indices", on_click)
 
 # ----------------------------
-# Local + LDOS plot
+# Local selected-site plots
 # ----------------------------
 @pn.depends(snapshot_slider, site_select)
 def local_plot(snapshot_name, site):
@@ -339,7 +455,6 @@ def local_plot(snapshot_name, site):
     rho_ui = np.interp(Ui, E, rho, left=np.nan, right=np.nan)
     rho_0 = np.interp(0.0, E, rho, left=np.nan, right=np.nan)
 
-    # LDOS plot
     fig_ldos, ax_ldos = plt.subplots(figsize=(6, 3.5))
     ax_ldos.plot(E, rho, label="LDOS")
     ax_ldos.axvline(Ui, ls="--", color="r", label="Ui")
@@ -401,6 +516,116 @@ def local_plot(snapshot_name, site):
     )
 
 # ----------------------------
+# Surface plot on the left
+# ----------------------------
+@pn.depends(snapshot_slider, cut_direction_select, cut_center_input, cut_width_input, surface_prop_select)
+def surface_plot(snapshot_name, cut_direction, cut_center, cut_width, surface_prop):
+    data = load_snapshot(snapshot_name)
+
+    idx_cut, coord_along, coord_vert = get_surface_cut_indices(
+        cut_direction, cut_center, cut_width
+    )
+
+    if len(idx_cut) == 0:
+        fig_empty, ax_empty = plt.subplots(figsize=(7, 4))
+        ax_empty.text(0.5, 0.5, "No sites in cut", ha="center", va="center")
+        ax_empty.axis("off")
+        fig_empty.tight_layout()
+        return pn.pane.Matplotlib(fig_empty, tight=True)
+
+    vals_all = scalar_values_surface(data, surface_prop, snapshot_name)
+    vals_cut = vals_all[idx_cut]
+
+    fig_cut, ax_cut = plt.subplots(figsize=(7, 5))
+    sc = ax_cut.scatter(
+        coord_along,
+        coord_vert,
+        c=vals_cut,
+        cmap="turbo",
+        s=35
+    )
+    plt.colorbar(sc, ax=ax_cut, pad=0.02, label=surface_prop)
+    ax_cut.set_xlabel("x" if cut_direction == "x" else "y")
+    ax_cut.set_ylabel("z")
+    ax_cut.set_title(f"Surface cut heatmap: {surface_prop}")
+    ax_cut.set_aspect("equal")
+    fig_cut.tight_layout()
+    return pn.pane.Matplotlib(fig_cut, tight=True)
+
+# ----------------------------
+# LDOS line-cut heatmap on the right
+# ----------------------------
+@pn.depends(snapshot_slider, cut_direction_select, cut_center_input, cut_width_input)
+def ldos_cut_plot(snapshot_name, cut_direction, cut_center, cut_width):
+    data = load_snapshot(snapshot_name)
+
+    if "ildos" not in data:
+        fig_empty, ax_empty = plt.subplots(figsize=(7, 4))
+        ax_empty.text(0.5, 0.5, "No ildos saved", ha="center", va="center")
+        ax_empty.axis("off")
+        fig_empty.tight_layout()
+        return pn.pane.Matplotlib(fig_empty, tight=True)
+
+    idx_cut, coord_along = get_quantum_line_cut_indices(
+        cut_direction, cut_center, cut_width
+    )
+
+    if len(idx_cut) == 0:
+        fig_empty, ax_empty = plt.subplots(figsize=(7, 4))
+        ax_empty.text(0.5, 0.5, "No quantum sites in cut", ha="center", va="center")
+        ax_empty.axis("off")
+        fig_empty.tight_layout()
+        return pn.pane.Matplotlib(fig_empty, tight=True)
+
+    ildos = data["ildos"]
+    E0 = np.asarray(ildos[idx_cut[0]][0], dtype=float)
+
+    rho_mat = []
+    ui_cut = []
+
+    for i in idx_cut:
+        E = np.asarray(ildos[i][0], dtype=float)
+        rho = np.asarray(ildos[i][1], dtype=float)
+
+        if len(E) != len(E0) or not np.allclose(E, E0):
+            rho_interp = np.interp(E0, E, rho, left=np.nan, right=np.nan)
+            rho_mat.append(rho_interp)
+        else:
+            rho_mat.append(rho)
+
+        site_id = Qsites[i]
+        ui_cut.append(float(data["Ui"][site_id]))
+
+    rho_mat = np.asarray(rho_mat, dtype=float).T  # (nE, nPos)
+    ui_cut = np.asarray(ui_cut, dtype=float)
+
+    fig_hm, ax_hm = plt.subplots(figsize=(7, 5))
+    extent = [coord_along.min(), coord_along.max(), E0.min(), E0.max()]
+    im = ax_hm.imshow(
+        rho_mat,
+        aspect="auto",
+        origin="lower",
+        extent=extent,
+        cmap="turbo"
+    )
+    plt.colorbar(im, ax=ax_hm, pad=0.02, label="LDOS")
+
+    # Overlay Ui line
+    ui_plot = ui_cut.copy()
+    ui_plot[(ui_plot < E0.min()) | (ui_plot > E0.max())] = np.nan
+    ax_hm.plot(coord_along, ui_plot, color="white", lw=1, ls="--", label="Ui")
+
+    ax_hm.set_xlim(coord_along.min(), coord_along.max())
+    ax_hm.set_ylim(E0.min(), E0.max())
+    ax_hm.legend(loc="upper right")
+
+    ax_hm.set_xlabel("x" if cut_direction == "x" else "y")
+    ax_hm.set_ylabel("Energy")
+    ax_hm.set_title("LDOS heatmap along line cut")
+    fig_hm.tight_layout()
+    return pn.pane.Matplotlib(fig_hm, tight=True)
+
+# ----------------------------
 # Watchers
 # ----------------------------
 snapshot_slider.param.watch(lambda e: update_system(), "value")
@@ -412,18 +637,34 @@ update_system()
 # ----------------------------
 # Layout
 # ----------------------------
-layout = pn.Row(
-    pn.Column(
-        snapshot_slider,
-        snapshot_player,
-        prop_select,
-        site_select,
-        bounds_panel,
-        info_panel,
-        width=320
-    ),
+left_controls = pn.Column(
+    snapshot_slider,
+    snapshot_player,
+    prop_select,
+    surface_prop_select,
+    site_select,
+    cut_direction_select,
+    cut_center_input,
+    cut_width_input,
+    bounds_panel,
+    info_panel,
+    width=340
+)
+
+left_plots = pn.Column(
     fig,
-    local_plot
+    surface_plot
+)
+
+right_plots = pn.Column(
+    local_plot,
+    ldos_cut_plot
+)
+
+layout = pn.Row(
+    left_controls,
+    left_plots,
+    right_plots
 )
 
 layout.servable()

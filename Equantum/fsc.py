@@ -117,29 +117,41 @@ class FSC:
         """
         #the carrier density will scale with the chosen lattice spacing. Here the present carrier densiyt is the one after scaling.
         return (4*ee**2/(3*np.pi)+4*phi/np.sqrt(3))/(3* a **2)/1e16
-    def get_energy_bounds(self, margin=0.05):
-        """
-        Estimate spectral bounds of the quantum Hamiltonian.
-        """
 
-        H = self.qsystem.get_hamiltonian()
+    def get_energy_bounds(self, margin=0.05, method="fast"):
+            H = self.qsystem.get_hamiltonian()
 
-        try:
-            emax = spla.eigsh(H, k=1, which="LA", return_eigenvectors=False)[0]
-            emin = spla.eigsh(H, k=1, which="SA", return_eigenvectors=False)[0]
-        except Exception:
-            # fallback Gershgorin bound
-            abs_rowsum = np.abs(H).sum(axis=1).A.ravel()
-            bound = abs_rowsum.max()
-            emin, emax = -bound, bound
+            if method == "fast":
+                diag = H.diagonal().real
+                H0_like = H.copy().tolil()
+                H0_like.setdiag(0.0)
+                H0_like = H0_like.tocsr()
 
-        width = emax - emin
-        pad = margin * width
+                abs_rowsum = np.abs(H0_like).sum(axis=1).A.ravel()
+                hop_bound = abs_rowsum.max()
 
-        bounds = (emin - pad, emax + pad)
-        self.energy_bounds = bounds
+                emin = diag.min() - hop_bound
+                emax = diag.max() + hop_bound
 
-        return bounds
+            elif method == "gershgorin":
+                abs_rowsum = np.abs(H).sum(axis=1).A.ravel()
+                bound = abs_rowsum.max()
+                emin, emax = -bound, bound
+
+            elif method == "eigsh":
+                try:
+                    emax = spla.eigsh(H, k=1, which="LA", return_eigenvectors=False)[0]
+                    emin = spla.eigsh(H, k=1, which="SA", return_eigenvectors=False)[0]
+                except Exception:
+                    abs_rowsum = np.abs(H).sum(axis=1).A.ravel()
+                    bound = abs_rowsum.max()
+                    emin, emax = -bound, bound
+            else:
+                raise ValueError("Unknown method")
+
+            width = emax - emin
+            pad = margin * width
+            return emin - pad, emax + pad
     
     def initial_Poisson(self):
         """
@@ -244,8 +256,8 @@ class FSC:
     def local_solver(self):
         dUdn=solvers.local_solver(self)
         print(np.mean(dUdn[0]),np.mean(dUdn[1]))
-        self.Ui[self.Qprime]+=dUdn[0]
-        self.ni[self.Qprime]+=dUdn[1]
+        self.Ui[self.Qprime]+=0.8*dUdn[0]
+        self.ni[self.Qprime]+=0.8*dUdn[1]
 
     def update_BC(self,syst,name,prop,value,ifinitial=False,FL_pinning=True):
         for site in list(self.sites.values()):
@@ -720,6 +732,20 @@ class FSC:
             [self.sites[idx].coordinates[:2] for idx in self.Qsites],
             dtype=float
         )
+        coords_all = np.array(
+            [self.sites[idx].coordinates for idx in self.sites.keys()],
+            dtype=float
+        )
+
+        site_ids_all = np.array(
+            list(self.sites.keys()),
+            dtype=int
+        )
+
+        materials_all = np.array(
+            [getattr(self.sites[idx], "material", "unknown") for idx in self.sites.keys()],
+            dtype=object
+        )
 
         gate_info = {}
         for idx, site in self.sites.items():
@@ -742,6 +768,9 @@ class FSC:
         static_data = {
             "Qsites": np.array(self.Qsites, dtype=int),
             "coords_q": coords_q,
+            "site_ids_all": site_ids_all,
+            "coords_all": coords_all,
+            "materials_all": materials_all,
             "geometry_params": geometry_params_clean,
             "unit_cell_area": float(self.unit_cell_area),
             "max_fill": float(self.max_fill),
