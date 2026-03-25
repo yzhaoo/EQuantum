@@ -1,10 +1,10 @@
 import numpy as np
 from scipy.interpolate import interp1d
-from scipy.optimize import minimize_scalar
+from scipy.optimize import minimize_scalar, brentq
 from joblib import Parallel, delayed
 
 
-def local_solver_i(idx, ildos, Ci, ni, Ui, limits=None):
+def local_solver_i(idx, ildos, Ci, ni, Ui, limits=None, alpha=0.2):
     """
     Solve the local electrostatic consistency condition for one site.
 
@@ -44,33 +44,56 @@ def local_solver_i(idx, ildos, Ci, ni, Ui, limits=None):
         fill_value="extrapolate",
         bounds_error=False,
     )
-
-    def dn_for_Ci(dU):
-        return dU * Ci + ni
-
-    def diff(dU):
-        return np.abs(dn_for_Ci(dU) - ildos_interp(dU))
+    def F(dU):
+        return ni + Ci * dU - ildos_interp(dU)
 
     if limits is None:
-        xmin = float(np.min(x_dis))
-        xmax = float(np.max(x_dis))
-        if xmin == xmax:
-            return 0.0, 0.0
-        limits = (xmin, xmax)
+        limits = (float(np.min(x_dis)), float(np.max(x_dis)))
+
+    a, b = limits
 
     try:
-        result = minimize_scalar(diff, bounds=limits, method="bounded")
-    except ValueError:
-        print(f"local_solver_i failed at idx={idx}")
-        raise
+        Fa, Fb = F(a), F(b)
+        if np.isfinite(Fa) and np.isfinite(Fb) and Fa * Fb <= 0:
+            dUsol = brentq(F, a, b)
+        else:
+            res = minimize_scalar(lambda u: abs(F(u)), bounds=limits, method="bounded")
+            dUsol = res.x
+    except Exception:
+        res = minimize_scalar(lambda u: abs(F(u)), bounds=limits, method="bounded")
+        dUsol = res.x
 
-    dUsol = result.x
-    dnsol = dn_for_Ci(dUsol) - ni
+
+    # mixed update
+    dUsol *= alpha
+    dnsol = Ci * dUsol
+
+    # def dn_for_Ci(dU):
+    #     return dU * Ci + ni
+
+    # def diff(dU):
+    #     return np.abs(dn_for_Ci(dU) - ildos_interp(dU))
+
+    # if limits is None:
+    #     xmin = float(np.min(x_dis))
+    #     xmax = float(np.max(x_dis))
+    #     if xmin == xmax:
+    #         return 0.0, 0.0
+    #     limits = (xmin, xmax)
+
+    # try:
+    #     result = minimize_scalar(diff, bounds=limits, method="bounded")
+    # except ValueError:
+    #     print(f"local_solver_i failed at idx={idx}")
+    #     raise
+
+    # dUsol = result.x
+    # dnsol = dn_for_Ci(dUsol) - ni
 
     return dUsol, dnsol
 
 
-def local_solver(fsc):
+def local_solver(fsc, **kwarg):
     dUs = np.zeros(len(fsc.Qprime))
     dns = np.zeros(len(fsc.Qprime))
 
@@ -90,6 +113,7 @@ def local_solver(fsc):
                 fsc.ni[fsc.Qprime][ii],
                 Uii,
                 elimit,
+                **kwarg
             )
             dUs[ii] = dU
             dns[ii] = dn
@@ -115,6 +139,7 @@ def local_solver(fsc):
                 nis[ii],
                 Uii,
                 elimit,
+                **kwarg
             )
             return dU, dn
 

@@ -5,6 +5,8 @@ import numpy as np
 import solvers as solvers
 import scipy.constants as sc
 import scipy.sparse.linalg as spla
+import time
+from IPython.display import clear_output
 import os
 
 import time
@@ -76,7 +78,8 @@ class FSC:
             ii: self.qsite_id_to_idx[qpidx]
             for ii, qpidx in enumerate(self.Qprime)
         }
-        
+        #solver properties
+        self.local_update_count=0
         self.Ncore=Ncore
         self.convergence_tol = convergence_tol
         self.max_iter = max_iter
@@ -254,10 +257,14 @@ class FSC:
 
 
     def local_solver(self):
-        dUdn=solvers.local_solver(self)
+        if self.local_update_count==0:
+            alpha=1
+        else:
+            alpha=0.2
+        dUdn=solvers.local_solver(self,alpha=alpha)
         print(np.mean(dUdn[0]),np.mean(dUdn[1]))
-        self.Ui[self.Qprime]+=0.8*dUdn[0]
-        self.ni[self.Qprime]+=0.8*dUdn[1]
+        self.Ui[self.Qprime]+=dUdn[0]
+        self.ni[self.Qprime]+=dUdn[1]
 
     def update_BC(self,syst,name,prop,value,ifinitial=False,FL_pinning=True):
         for site in list(self.sites.values()):
@@ -304,13 +311,12 @@ class FSC:
         save_ildos=True,
         **kwarg
     ):
-        import time
-        from IPython.display import clear_output
+
 
         # save static metadata once
         if save:
             self.save_static_reference(snapshot_folder)
-
+        save_intermediate = (snapshot_mode != "final_only")
         # initialize active region once
         self.update_Qprime()
 
@@ -327,7 +333,7 @@ class FSC:
             # ----------------------------
             # Iteration-level snapshot
             # ----------------------------
-            if save and snapshot_mode == "iteration":
+            if save and save_intermediate and snapshot_mode == "iteration":
                 if snapshot_every is not None and snapshot_every > 0:
                     if it % snapshot_every == 0:
                         self.save_snapshot(
@@ -341,7 +347,7 @@ class FSC:
             # =================================
             self.local_solver()
 
-            if save and snapshot_mode == "step":
+            if save and save_intermediate and snapshot_mode == "step":
                 self.save_snapshot(
                     f"iter_{it:04d}_local",
                     folder=snapshot_folder,
@@ -356,7 +362,7 @@ class FSC:
             qprime_after = len(self.Qprime)
             self.log["Qprime_len"].append(qprime_after)
 
-            if save and snapshot_mode == "step":
+            if save and save_intermediate and snapshot_mode == "step":
                 self.save_snapshot(
                     f"iter_{it:04d}_qprime",
                     folder=snapshot_folder,
@@ -375,6 +381,13 @@ class FSC:
 
                 if sum(iter_num) >= max_total_iter:
                     print("Reached maximum iteration count.")
+                    if save:
+                        self.save_snapshot(
+                            f"final_iter_{it:04d}_max",
+                            folder=snapshot_folder,
+                            save_ildos=save_ildos
+                        )
+
                     break
                 continue
 
@@ -391,7 +404,7 @@ class FSC:
                 self.update_Poisson()
                 self.log["timing_poisson"].append(time.perf_counter() - t0)
 
-                if save and snapshot_mode == "step":
+                if save and save_intermediate and snapshot_mode == "step":
                     self.save_snapshot(
                         f"iter_{it:04d}_poisson",
                         folder=snapshot_folder,
@@ -403,6 +416,12 @@ class FSC:
 
                 if sum(iter_num) >= max_total_iter:
                     print("Reached maximum iteration count.")
+                    if save:
+                            self.save_snapshot(
+                                f"final_iter_{it:04d}_max",
+                                folder=snapshot_folder,
+                                save_ildos=save_ildos
+                            )
                     break
                 continue
 
@@ -411,7 +430,7 @@ class FSC:
             self.update_Poisson()
             self.log["timing_poisson"].append(time.perf_counter() - t0)
 
-            if save and snapshot_mode == "step":
+            if save and save_intermediate and snapshot_mode == "step":
                 self.save_snapshot(
                     f"iter_{it:04d}_poisson_relax",
                     folder=snapshot_folder,
@@ -436,7 +455,7 @@ class FSC:
 
                 self.log["timing_quantum"].append(time.perf_counter() - t0)
 
-                if save and snapshot_mode == "step":
+                if save and save_intermediate and snapshot_mode == "step":
                     self.save_snapshot(
                         f"iter_{it:04d}_quantum",
                         folder=snapshot_folder,
@@ -450,6 +469,14 @@ class FSC:
             else:
                 print("FSC converged / stopped.")
                 self.log["timing_total"].append(time.perf_counter() - t_iter0)
+
+                if save:
+                        self.save_snapshot(
+                            f"final_iter_{it:04d}_stop",
+                            folder=snapshot_folder,
+                            save_ildos=save_ildos
+                        )
+
                 break
             
 
@@ -663,11 +690,11 @@ class FSC:
         if self.log.get("Ui_maxdiff"):
             print(f"max |ΔU|      : {self.log['Ui_maxdiff'][-1]:.3e}")
         if self.log.get("Ui_l2diff"):
-            print(f"max |ΔU|      : {self.log['Ui_l2diff'][-1]:.3e}")
+            print(f"max |ΔU| norm  : {self.log['Ui_l2diff'][-1]:.3e}")
         if self.log.get("ni_maxdiff"):
             print(f"max |Δn|      : {self.log['ni_maxdiff'][-1]:.3e}")
         if self.log.get("ni_l2diff"):
-            print(f"max |Δn|      : {self.log['ni_l2diff'][-1]:.3e}")
+            print(f"max |Δn| norm  : {self.log['ni_l2diff'][-1]:.3e}")
         if self.log.get("ildos_maxdiff"):
             print(f"max |ΔILDOS|  : {self.log['ildos_maxdiff'][-1]:.3e}")
 

@@ -80,6 +80,7 @@ def update_U(fsc, syst):
     """
     Update onsite potential in the quantum backend.
     """
+    fsc.local_update_count +=1
     builder = syst.quantum_builder
 
     if builder == "kwant":

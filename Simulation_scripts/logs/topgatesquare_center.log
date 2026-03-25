@@ -1,0 +1,21 @@
+nohup: ignoring input
+Generated 77737 points in 3D.
+Voronoi cells have been created.
+12 sites have been removed from the system.
+The total number of sites of the current system doesn't match with the provided config file.
+Warning: Site with id 77725 not found in the system.
+Warning: Site with id 77726 not found in the system.
+Warning: Site with id 77727 not found in the system.
+Warning: Site with id 77728 not found in the system.
+Warning: Site with id 77729 not found in the system.
+Warning: Site with id 77730 not found in the system.
+Warning: Site with id 77731 not found in the system.
+Warning: Site with id 77732 not found in the system.
+Warning: Site with id 77733 not found in the system.
+Warning: Site with id 77734 not found in the system.
+Warning: Site with id 77735 not found in the system.
+Warning: Site with id 77736 not found in the system.
+The quantum system has been built using the default solver.
+Quantum system is generated using default.
+EQsystem is successfully initialized.
+🔄 Full Hamiltonian rebuild (qparams change)
