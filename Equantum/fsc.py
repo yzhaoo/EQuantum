@@ -121,6 +121,19 @@ class FSC:
         #the carrier density will scale with the chosen lattice spacing. Here the present carrier densiyt is the one after scaling.
         return (4*ee**2/(3*np.pi)+4*phi/np.sqrt(3))/(3* a **2)/1e16
 
+    def reset_log(self):
+        self.log = {
+            "Qprime_len": [len(self.Qprime)],
+            "Ui_maxdiff": [],
+            "Ui_l2diff": [],
+            "ni_maxdiff": [],
+            "ni_l2diff": [],
+            "ildos_maxdiff": [],
+            "timing_poisson": [],
+            "timing_quantum": [],
+            "timing_total": [],
+        }
+
     def get_energy_bounds(self, margin=0.05, method="fast"):
             H = self.qsystem.get_hamiltonian()
 
@@ -155,7 +168,20 @@ class FSC:
             width = emax - emin
             pad = margin * width
             return emin - pad, emax + pad
-    
+
+    def update_max_fill(self, system):
+        emin, emax = self.get_energy_bounds()
+        bandwidth = max(abs(emin), abs(emax))
+
+        if self.lattice_type == "square":
+            self.max_fill = system.max_fill
+        else:
+            self.max_fill = self.E_to_n(
+                bandwidth,
+                self.qparams["phi"],
+                self.lat_spacing * 1e-6
+            )
+            
     def initial_Poisson(self):
         """
         initialize the Poisson problem without Quantum system for the given boundary condition.
@@ -305,20 +331,40 @@ class FSC:
         save=True,
         snapshot_every=5,
         ldos_method="TF",
-        snapshot_mode="iteration",   # "iteration" or "step"
+        snapshot_mode="iteration",   # "iteration", "step", or "final_only"
         snapshot_folder="fsc_logs",
         max_total_iter=30,
         save_ildos=True,
         **kwarg
     ):
+        def converged():
+            """
+            Candidate convergence:
+            - ni_l2diff below tolerance
+            """
+            if len(self.log.get("ni_l2diff", [])) == 0:
+                return False
 
+            return ( self.log["ni_l2diff"][-1] < self.convergence_tol)
+
+        def save_final(tag, it):
+            if save:
+                self.save_snapshot(
+                    f"final_iter_{it:04d}_{tag}",
+                    folder=snapshot_folder,
+                    save_ildos=save_ildos
+                )
 
         # save static metadata once
         if save:
             self.save_static_reference(snapshot_folder)
+
         save_intermediate = (snapshot_mode != "final_only")
+
         # initialize active region once
         self.update_Qprime()
+        if len(self.Qprime) == 0:
+            raise RuntimeError("Qprime is empty: the active quantum region vanished.")
 
         iter_num = [0, 0, 0]   # [Qprime updates, Poisson updates, Quantum updates]
 
@@ -381,21 +427,16 @@ class FSC:
 
                 if sum(iter_num) >= max_total_iter:
                     print("Reached maximum iteration count.")
-                    if save:
-                        self.save_snapshot(
-                            f"final_iter_{it:04d}_max",
-                            folder=snapshot_folder,
-                            save_ildos=save_ildos
-                        )
-
+                    save_final("max", it)
                     break
+
                 continue
 
             # =================================
-            # Step 3: Poisson update if needed
+            # Step 3: decide whether one Poisson update is needed
             # =================================
             need_poisson = (
-                len(self.log["ni_l2diff"]) == 0
+                len(self.log.get("ni_l2diff", [])) == 0
                 or self.log["ni_l2diff"][-1] > self.convergence_tol
             )
 
@@ -416,69 +457,74 @@ class FSC:
 
                 if sum(iter_num) >= max_total_iter:
                     print("Reached maximum iteration count.")
-                    if save:
-                            self.save_snapshot(
-                                f"final_iter_{it:04d}_max",
-                                folder=snapshot_folder,
-                                save_ildos=save_ildos
-                            )
+                    save_final("max", it)
                     break
+
                 continue
 
-            # extra Poisson relaxation
-            t0 = time.perf_counter()
-            self.update_Poisson()
-            self.log["timing_poisson"].append(time.perf_counter() - t0)
-
-            if save and save_intermediate and snapshot_mode == "step":
-                self.save_snapshot(
-                    f"iter_{it:04d}_poisson_relax",
-                    folder=snapshot_folder,
-                    save_ildos=save_ildos
-                )
-
             # =================================
-            # Step 4: Quantum update
+            # Step 4: candidate convergence check
+            # If dU_max and ni_l2diff are already small, do one final
+            # Poisson verification. Only terminate if they remain small.
             # =================================
-            if sum(iter_num) < max_total_iter:
+            if converged() and iter_num[2]>0:
                 t0 = time.perf_counter()
-                quantum_kwargs = {
-                    "approx": ldos_method,
-                    "Ncore": self.Ncore,
-                    **kwarg,
-                }
-
-                if ldos_method == "kmeanssample":
-                    quantum_kwargs["num_sample"] = int(5 * self.Ncore)
-
-                self.update_Quantum(system, **quantum_kwargs)
-
-                self.log["timing_quantum"].append(time.perf_counter() - t0)
+                self.update_Poisson()
+                self.log["timing_poisson"].append(time.perf_counter() - t0)
 
                 if save and save_intermediate and snapshot_mode == "step":
                     self.save_snapshot(
-                        f"iter_{it:04d}_quantum",
+                        f"iter_{it:04d}_poisson_verify",
                         folder=snapshot_folder,
                         save_ildos=save_ildos
                     )
 
-                iter_num[2] += 1
+                iter_num[1] += 1
                 self.log["timing_total"].append(time.perf_counter() - t_iter0)
+
+                if converged():
+                    print("FSC converged: dU_max and ni_l2diff remain below tolerance after final Poisson verification.")
+                    save_final("converged", it)
+                    break
+
+                if sum(iter_num) >= max_total_iter:
+                    print("Reached maximum iteration count.")
+                    save_final("max", it)
+                    break
+
                 continue
 
-            else:
-                print("FSC converged / stopped.")
-                self.log["timing_total"].append(time.perf_counter() - t_iter0)
+            # =================================
+            # Step 5: Quantum update
+            # =================================
+            t0 = time.perf_counter()
+            quantum_kwargs = {
+                "approx": ldos_method,
+                "Ncore": self.Ncore,
+                **kwarg,
+            }
 
-                if save:
-                        self.save_snapshot(
-                            f"final_iter_{it:04d}_stop",
-                            folder=snapshot_folder,
-                            save_ildos=save_ildos
-                        )
+            if ldos_method == "kmeanssample":
+                quantum_kwargs["num_sample"] = int(5 * self.Ncore)
 
+            self.update_Quantum(system, **quantum_kwargs)
+
+            self.log["timing_quantum"].append(time.perf_counter() - t0)
+
+            if save and save_intermediate and snapshot_mode == "step":
+                self.save_snapshot(
+                    f"iter_{it:04d}_quantum",
+                    folder=snapshot_folder,
+                    save_ildos=save_ildos
+                )
+
+            iter_num[2] += 1
+            self.log["timing_total"].append(time.perf_counter() - t_iter0)
+
+            if sum(iter_num) >= max_total_iter:
+                print("Reached maximum iteration count.")
+                save_final("max", it)
                 break
-            
 
     def save_Uini(self,Uis,nis,ildoss,filename):
         mdic={}

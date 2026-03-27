@@ -1,5 +1,4 @@
 import os
-import sys
 import json
 import csv
 import time
@@ -8,9 +7,7 @@ from datetime import datetime
 
 import numpy as np
 
-# --------------------------------------------------
-# helpers
-# --------------------------------------------------
+
 def sanitize_for_json(obj):
     if isinstance(obj, dict):
         return {str(k): sanitize_for_json(v) for k, v in obj.items()}
@@ -24,11 +21,13 @@ def sanitize_for_json(obj):
         return getattr(obj, "__name__", "<callable>")
     return obj
 
+
 def get_function_source(func):
     try:
         return inspect.getsource(func)
     except Exception:
         return f"<source unavailable: {getattr(func, '__name__', 'anonymous')}>"
+
 
 def write_scan_manifest(
     out_folder,
@@ -38,10 +37,11 @@ def write_scan_manifest(
     Vbgs,
     config_file,
     fixed_params,
+    script_path=None,
 ):
     manifest = {
         "created_at": datetime.now().isoformat(),
-        "script": os.path.abspath(__file__) if "__file__" in globals() else "<interactive>",
+        "script": script_path or "<interactive>",
         "output_folder": os.path.abspath(out_folder),
         "config_file": os.path.abspath(config_file),
         "density_function_name": getattr(density_function, "__name__", "anonymous"),
@@ -56,6 +56,7 @@ def write_scan_manifest(
 
     with open(os.path.join(out_folder, "scan_manifest.json"), "w") as f:
         json.dump(manifest, f, indent=2)
+
 
 def append_progress_row(out_folder, row):
     csv_path = os.path.join(out_folder, "scan_progress.csv")
@@ -99,10 +100,11 @@ def reset_fsc_log(fsc):
         "timing_total": [],
     }
 
-def build_fresh_fsc(syst, phi, Vbg, fixed_params):
+
+def build_fresh_fsc(FSC_cls, syst, phi, Vbg, fixed_params):
     qparams = {"Ufunc": lambda x: 0, "phi": phi}
 
-    fsc = FSC(syst, ifinitial=False, qparams=qparams)
+    fsc = FSC_cls(syst, ifinitial=False, qparams=qparams)
 
     fsc.update_BC(syst, "gate", "potential", fixed_params["gate_potential"])
     fsc.update_BC(syst, "dielectric", "dielectric_constant", fixed_params["dielectric_constant"])
@@ -114,16 +116,24 @@ def build_fresh_fsc(syst, phi, Vbg, fixed_params):
     reset_fsc_log(fsc)
     return fsc
 
+
 def update_existing_fsc(fsc, syst, phi, Vbg):
-    # update phi without reinitializing everything
+    fsc.Qprime = fsc.Qsites.copy()
+    fsc.qsystem.update_active_sites(fsc.Qprime)
+    fsc.Qp_in_Q = {
+        ii: fsc.qsite_id_to_idx[sid]
+        for ii, sid in enumerate(fsc.Qprime)
+    }
+    fsc.N_indices=(syst.N_indices).copy()
+    fsc.D_indices=(syst.D_indices).copy()
+    #fsc.initial_Poisson()
     fsc.update_qparams(syst, {"phi": phi}, ifinitial=False)
-
-    # update backgate potential without full reinit
     fsc.update_BC(syst, "backgate", "potential", Vbg, ifinitial=True)
-
-    # reset only run log, not the solution state
     reset_fsc_log(fsc)
+
+
 def run_scan(
+    FSC_cls,
     syst,
     phis,
     Vbgs,
@@ -140,7 +150,7 @@ def run_scan(
             phi = float(phi)
             Vbg = float(Vbg)
 
-            print(f"\n=== Running phi={phi:.4f}, Vbg={Vbg:.4f} ===")
+            print(f"\\n=== Running phi={phi:.4f}, Vbg={Vbg:.4f} ===")
             t0 = time.perf_counter()
 
             status = "ok"
@@ -155,7 +165,7 @@ def run_scan(
 
             try:
                 if need_fresh_fsc or fsc is None:
-                    fsc = build_fresh_fsc(syst, phi, Vbg, fixed_params)
+                    fsc = build_fresh_fsc(FSC_cls, syst, phi, Vbg, fixed_params)
                     need_fresh_fsc = False
                     restart_mode = "fresh"
                 else:
@@ -192,20 +202,16 @@ def run_scan(
                 if os.path.abspath(src) != os.path.abspath(dst):
                     os.replace(src, dst)
 
-                converged = ("_conv" in latest_file)
+                converged = "_conv" in latest_file
 
             except RuntimeError as e:
                 status = f"error: RuntimeError: {e}"
                 print(status)
-
-                # next point will use a fresh FSC
                 need_fresh_fsc = True
 
             except Exception as e:
                 status = f"error: {type(e).__name__}: {e}"
                 print(status)
-
-                # next point will use a fresh FSC
                 need_fresh_fsc = True
 
             runtime_sec = time.perf_counter() - t0
@@ -230,89 +236,3 @@ def run_scan(
 
             append_progress_row(out_folder, row)
             print(f"✔ Logged phi={phi:.4f}, Vbg={Vbg:.4f}")
-
-
-import os
-import sys
-import numpy as np
-from tqdm import tqdm
-
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
-sys.path.append(os.path.join(PROJECT_ROOT, "Equantum"))
-
-from sites import Site
-from fsc import FSC
-from EQsystem import System
-import poissonsolver as psolver
-import qbuilder
-
-# --------------------------------------------------
-# setup
-# --------------------------------------------------
-def density_function(z):
-    spacing0 = 0.011
-    k = 0.2
-    if abs(z) < 3 * spacing0:
-        return spacing0
-    else:
-        return spacing0 + k * z
-
-geoparams = {
-    "lattice_type": "square",
-    "box_size": ((-0.6, 0.6), (-0.45, 0.45), (-0.08, 0.08)),
-    "sampling_density_function": density_function,
-    "quantum_center": (0, 0, 0),
-}
-
-setuppathupdate = "/scratch/zhaoyuha/Datas/EQuantum_data/squaregate_center/setup/setup_ae7d9fc59f6721d485f0e595c14ca989"
-config_file = setuppathupdate + "/updated_sites_square.json"
-out_folder = setuppathupdate + "/fsc_logs_scan"
-os.makedirs(out_folder, exist_ok=True)
-
-phis = np.linspace(0.08, 0.12, 10)
-Vbgs = np.linspace(1, 2.5, 10)
-
-fixed_params = {
-    "gate_potential": -1,
-    "dielectric_constant": 4,
-    "Ncore": 20,
-    "convergence_tol": 3e-2,
-    "ldos_method": "ED",
-    "eta": 0.00015,
-    "M": 256,
-    "eps": 0.05,
-    "kernel": "jackson",
-    "save_ildos": True,
-}
-
-
-write_scan_manifest(
-    out_folder=out_folder,
-    density_function=density_function,
-    geoparams=geoparams,
-    phis=phis,
-    Vbgs=Vbgs,
-    config_file=config_file,
-    fixed_params=fixed_params,
-)
-
-# --------------------------------------------------
-# initialize system once
-# --------------------------------------------------
-syst = System(
-    geoparams,
-    config_file=config_file,
-    ifqsystem=True,
-    quantum_builder="default"
-)
-
-
-
-run_scan(
-    syst=syst,
-    phis=phis,
-    Vbgs=Vbgs,
-    out_folder=setuppathupdate + "/fsc_logs_scan",
-    fixed_params=fixed_params,
-)

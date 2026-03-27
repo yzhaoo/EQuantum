@@ -4,7 +4,7 @@ from scipy.optimize import minimize_scalar, brentq
 from joblib import Parallel, delayed
 
 
-def local_solver_i(idx, ildos, Ci, ni, Ui, limits=None, alpha=0.2):
+def local_solver_i(idx, ildos, Ci, ni, Ui, limits=None, alpha=0.8):
     """
     Solve the local electrostatic consistency condition for one site.
 
