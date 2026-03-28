@@ -40,7 +40,7 @@ def main():
         "gate_potential": -1,
         "dielectric_constant": 4,
         "Ncore": 30,
-        "convergence_tol": 2e-2,
+        "convergence_tol": 3e-2,
         "ldos_method": "ED",
         "eta": 0.00015,
         "M": 256,

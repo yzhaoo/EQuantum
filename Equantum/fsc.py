@@ -462,40 +462,11 @@ class FSC:
 
                 continue
 
-            # =================================
-            # Step 4: candidate convergence check
-            # If dU_max and ni_l2diff are already small, do one final
-            # Poisson verification. Only terminate if they remain small.
-            # =================================
-            if converged() and iter_num[2]>0:
-                t0 = time.perf_counter()
-                self.update_Poisson()
-                self.log["timing_poisson"].append(time.perf_counter() - t0)
 
-                if save and save_intermediate and snapshot_mode == "step":
-                    self.save_snapshot(
-                        f"iter_{it:04d}_poisson_verify",
-                        folder=snapshot_folder,
-                        save_ildos=save_ildos
-                    )
-
-                iter_num[1] += 1
-                self.log["timing_total"].append(time.perf_counter() - t_iter0)
-
-                if converged():
-                    print("FSC converged: dU_max and ni_l2diff remain below tolerance after final Poisson verification.")
-                    save_final("converged", it)
-                    break
-
-                if sum(iter_num) >= max_total_iter:
-                    print("Reached maximum iteration count.")
-                    save_final("max", it)
-                    break
-
-                continue
+            
 
             # =================================
-            # Step 5: Quantum update
+            # Step 4: Quantum update
             # =================================
             t0 = time.perf_counter()
             quantum_kwargs = {
@@ -520,6 +491,61 @@ class FSC:
 
             iter_num[2] += 1
             self.log["timing_total"].append(time.perf_counter() - t_iter0)
+            # =================================
+            # Step 5: candidate convergence check
+            # If ni_l2diff are already small, do one final
+            # Poisson verification. Only terminate if they remain small.
+            # =================================
+            if converged() and iter_num[2]>3:
+                t0 = time.perf_counter()
+                self.update_Poisson()
+                self.log["timing_poisson"].append(time.perf_counter() - t0)
+
+                if save and save_intermediate and snapshot_mode == "step":
+                    self.save_snapshot(
+                        f"iter_{it:04d}_poisson_verify",
+                        folder=snapshot_folder,
+                        save_ildos=save_ildos
+                    )
+
+                iter_num[1] += 1
+                self.log["timing_total"].append(time.perf_counter() - t_iter0)
+
+                t0 = time.perf_counter()
+                quantum_kwargs = {
+                    "approx": ldos_method,
+                    "Ncore": self.Ncore,
+                    **kwarg,
+                }
+
+                if ldos_method == "kmeanssample":
+                    quantum_kwargs["num_sample"] = int(5 * self.Ncore)
+
+                self.update_Quantum(system, **quantum_kwargs)
+
+                self.log["timing_quantum"].append(time.perf_counter() - t0)
+
+                if save and save_intermediate and snapshot_mode == "step":
+                    self.save_snapshot(
+                        f"iter_{it:04d}_quantum",
+                        folder=snapshot_folder,
+                        save_ildos=save_ildos
+                    )
+
+                iter_num[2] += 1
+                self.log["timing_total"].append(time.perf_counter() - t_iter0)
+
+                if converged():
+                    print("FSC converged: dU_max and ni_l2diff remain below tolerance after final Poisson verification.")
+                    save_final("converged", it)
+                    break
+
+                if sum(iter_num) >= max_total_iter:
+                    print("Reached maximum iteration count.")
+                    save_final("max", it)
+                    break
+
+                continue
 
             if sum(iter_num) >= max_total_iter:
                 print("Reached maximum iteration count.")
