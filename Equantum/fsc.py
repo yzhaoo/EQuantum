@@ -106,7 +106,7 @@ class FSC:
             #update the maximal filling for graphene under magnetic field.
             emin, emax = self.get_energy_bounds()
             bandwidth = max(abs(emin), abs(emax))
-            self.max_fill = system.max_fill if self.lattice_type=="square" else self.E_to_n(bandwidth, self.qparams['phi'], self.lat_spacing*1e-6)
+            self.max_fill = system.max_fill # if self.lattice_type=="square" else self.E_to_n(bandwidth, self.qparams['phi'], self.lat_spacing*1e-6)
             #print(self.qparams['phi'],self.lat_spacing,self.bandwidth,self.max_fill,self.E_to_n(self.bandwidth,self.qparams['phi'],self.lat_spacing))
         #initialize Quantum problem
         self.initial_Quantum(system)

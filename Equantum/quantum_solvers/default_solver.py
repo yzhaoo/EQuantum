@@ -519,14 +519,17 @@ def mag_hop_square(t,to_site,from_site,phi,lat_spacing):
     #nx=coord_i[0]
     #return t*np.exp(1j*2*np.pi*phi*nx*ydirection)
 
-def mag_hop_honeycomb(t,to_site,from_site,phi,lat_spacing):
-    coord_i=np.array(from_site.coordinates)/lat_spacing
-    coord_f=np.array(to_site.coordinates)/lat_spacing
-    dy=(coord_f[1]- coord_i[1])
-    dy = 0 if np.abs(dy)>1e-6 else 1
-    xdirection=np.sign(coord_f[0]-coord_i[0])
-    ny=coord_i[1]
-    return t*np.exp(1j*2*np.pi*phi*ny*dy*(-1/2)*xdirection)
+import numpy as np
+
+def mag_hop_honeycomb(t, to_site, from_site, phi, lat_spacing):
+    ri = np.asarray(from_site.coordinates[:2], dtype=float) / lat_spacing
+    rf = np.asarray(to_site.coordinates[:2], dtype=float) / lat_spacing
+
+    xi, yi = ri
+    xf, yf = rf
+    dy = yf - yi
+
+    return t * np.exp(1j * 2 * np.pi * phi * xi * dy)
 
 
 
