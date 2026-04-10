@@ -11,6 +11,7 @@ import qbuilder as qbuilder
 from geometry import Geometry3D
 from sites import Site
 import def_system_func as systemfunc
+from collections import deque
 
 # Assume Geometry3D and Site are defined elsewhere and imported.
 # For example:
@@ -18,7 +19,15 @@ import def_system_func as systemfunc
 # from site_module import Site
 
 class System:
-    def __init__(self, geometry_params, assign_mat=True, config_file=None,ifqsystem=False,t=1,quantum_builder="default"):
+    def __init__(self, 
+                 geometry_params, 
+                 assign_mat=True, 
+                 config_file=None,
+                 ifqsystem=False,
+                 t=1,
+                 quantum_builder="default",
+                 prune_vacuum=True,
+                 vacuum_shells_to_keep=2):
         """
         Initialize the System by building the 3D geometry and assigning site properties.
 
@@ -66,6 +75,13 @@ class System:
             else:
                 self.update_sites_from_func()
 
+        # prune vacuum sites (safe: Blender guarantees naming)
+        kept_ids, removed_ids = self.prune_vacuum_sites(shells_to_keep=2)
+        self.apply_site_pruning(kept_ids)
+        self.update_mat_indices()
+
+        print(f"Vacuum pruning: removed {len(removed_ids)} sites")
+
         #initialize quantum system
         #scale the hopping amplitude according to the discretization level
         if self.geometry_params["lattice_type"]=="square":
@@ -100,7 +116,71 @@ class System:
                 print("Quantum system is generated using "+quantum_builder+".")
         print("EQsystem is successfully initialized.")
 
+    def prune_vacuum_sites(self, shells_to_keep=2):
+        all_ids = set(self.sites.keys())
 
+        vacuum_ids = {
+            sid for sid, site in self.sites.items()
+            if site.material == "vacuum"
+        }
+        matter_ids = all_ids - vacuum_ids
+
+        if len(vacuum_ids) == 0 or len(matter_ids) == 0:
+            return all_ids, set()
+
+        vacuum_dist = {}
+        q = deque()
+
+        # first shell
+        for mid in matter_ids:
+            for nid in self.sites[mid].neighbors:
+                if nid in vacuum_ids and nid not in vacuum_dist:
+                    vacuum_dist[nid] = 1
+                    q.append(nid)
+
+        # BFS outward
+        while q:
+            sid = q.popleft()
+            d = vacuum_dist[sid]
+
+            if d >= shells_to_keep:
+                continue
+
+            for nid in self.sites[sid].neighbors:
+                if nid in vacuum_ids and nid not in vacuum_dist:
+                    vacuum_dist[nid] = d + 1
+                    q.append(nid)
+
+        kept_vacuum = {
+            sid for sid, d in vacuum_dist.items()
+            if d <= shells_to_keep
+        }
+
+        kept_ids = set(matter_ids) | kept_vacuum
+        removed_ids = all_ids - kept_ids
+
+        return kept_ids, removed_ids
+
+    def apply_site_pruning(self, kept_ids):
+        """
+        Remove sites not in kept_ids and clean neighbor dictionaries.
+        """
+        kept_ids = set(kept_ids)
+
+        new_sites = {}
+        for sid, site in self.sites.items():
+            if sid not in kept_ids:
+                continue
+            new_sites[sid] = site
+
+        # prune neighbor links
+        for sid, site in new_sites.items():
+            site.neighbors = {
+                nid: val for nid, val in site.neighbors.items()
+                if nid in kept_ids
+            }
+
+        self.sites = new_sites
 
     def build_geometry(self):
         self.geometry= Geometry3D(lattice_type=self.geometry_params["lattice_type"],
