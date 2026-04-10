@@ -153,21 +153,32 @@ class QuantumSystem:
 
     # -------------------------------------------------
     def get_energy_bounds(self, margin=0.05):
+        H = self.get_hamiltonian().tocsr()
 
-        H = self.get_hamiltonian()
+        diag = H.diagonal().real
+        off_abs_sum = np.abs(H).sum(axis=1).A.ravel() - np.abs(diag)
 
-        try:
-            emax = spla.eigsh(H, k=1, which="LA", return_eigenvectors=False)[0]
-            emin = spla.eigsh(H, k=1, which="SA", return_eigenvectors=False)[0]
-        except Exception:
-            abs_rowsum = np.abs(H).sum(axis=1).A.ravel()
-            bound = abs_rowsum.max()
-            emin, emax = -bound, bound
+        emin = np.min(diag - off_abs_sum)
+        emax = np.max(diag + off_abs_sum)
 
         width = emax - emin
         pad = margin * width
-
         return emin - pad, emax + pad
+
+        # H = self.get_hamiltonian()
+
+        # try:
+        #     emax = spla.eigsh(H, k=1, which="LA", return_eigenvectors=False)[0]
+        #     emin = spla.eigsh(H, k=1, which="SA", return_eigenvectors=False)[0]
+        # except Exception:
+        #     abs_rowsum = np.abs(H).sum(axis=1).A.ravel()
+        #     bound = abs_rowsum.max()
+        #     emin, emax = -bound, bound
+
+        # width = emax - emin
+        # pad = margin * width
+
+        # return emin - pad, emax + pad
     
     # --------------------------------------------------
 
@@ -238,6 +249,7 @@ class QuantumSystem:
             self.update_qparams(qparams)
 
         if approx == "TF":
+            print("LDOS is calculated through kpm as a whole system.")
             bulk_E, bulk_rho = self.get_dos(w=Erange, M=M, n_random=n_random, **kwargs)
             bulk_proj = project_ldos_to_global_grid(
                 bulk_E, bulk_rho, fsc.E_global, fsc.max_fill
@@ -249,9 +261,11 @@ class QuantumSystem:
             )
 
         elif approx == "kmeanssample":
+            print("LDOS is caculated through kmeans sampling.")
             # already normalized per cluster inside sample_ldos
             dataall = self.sample_ldos(fsc, Ncore=Ncore, M=M, **kwargs)
         elif approx == "ED":
+            print("LDOS is calculated with ED method.")
             H = self.get_hamiltonian()
 
             eta = kwargs.pop("eta", 0.02)

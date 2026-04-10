@@ -26,7 +26,24 @@ def polygon_area(vertices):
         area += triangle_area
     return area
 
+def create_sites_from_points_3d(geometry3d):
+    """
+    Create bare Site objects from geometry points only.
+    No Voronoi tessellation, no neighbors.
+    """
+    points = geometry3d.points
+    sites = {}
 
+    for i, p in enumerate(points):
+        sites[i] = Site(
+            site_id=i,
+            coordinates=np.array(p, dtype=float),
+            charge=0.0,
+            potential=0.0,
+            dielectric_constant=1.0
+        )
+
+    return sites
 
 def create_sites_from_geometry_3d(geometry3d):
     """
@@ -64,8 +81,8 @@ def create_sites_from_geometry_3d(geometry3d):
         face_vertices = vor.vertices[ridge_vertices]
         # Compute the area of the face.
         face_area = polygon_area(face_vertices)
-        # Compute the distance between the two sites.
-        distance = np.linalg.norm(sites[i].coordinates - sites[j].coordinates)
+        # # Compute the distance between the two sites.
+        # distance = np.linalg.norm(sites[i].coordinates - sites[j].coordinates)
         # Add neighbor relationship for both sites.
         sites[i].add_neighbor(j, face_area)
         sites[j].add_neighbor(i, face_area)

@@ -60,16 +60,12 @@ class Geometry3D:
         return self.points
 
     def compute_voronoi(self):
-        """
-        Compute the 3D Voronoi tessellation for the generated points using Qhull.
-        Note: Full 3D Voronoi visualization is non-trivial.
-        
-        Returns:
-        - vor: a scipy.spatial.Voronoi object containing the Voronoi tessellation.
-        """
         if self.points is None:
             raise ValueError("No points generated. Call discretize() first.")
-        self.voronoi = Voronoi(self.points)
+
+        if self.voronoi is None:
+            self.voronoi = Voronoi(self.points)
+
         return self.voronoi
 
     def plot_geometry(self):

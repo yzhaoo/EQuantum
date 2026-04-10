@@ -51,17 +51,15 @@ class System:
         self.geometry.discretize()
         print("Generated", len(self.geometry.points), "points in 3D.")
         
-        # Optionally compute the Voronoi tessellation if needed later
-        if config_file is not None or assign_mat:
+        need_topology = (config_file is not None) or assign_mat or ifqsystem
+
+        if need_topology:
             self.geometry.compute_voronoi()
             print("Voronoi cells have been created.")
-        
-        # Build Site objects from the geometry points.
-        # Here we simply create a Site for each point with default values.
-        self.sites = systemfunc.create_sites_from_geometry_3d(self.geometry)
-        
-        if config_file is not None or assign_mat:
+            self.sites = systemfunc.create_sites_from_geometry_3d(self.geometry)
             self.remove_dangling_site()
+        else:
+            self.sites = systemfunc.create_sites_from_points_3d(self.geometry)
             
         self.num_sites=len(self.sites)
         self.material_indices={}
@@ -78,6 +76,8 @@ class System:
         # prune vacuum sites (safe: Blender guarantees naming)
         kept_ids, removed_ids = self.prune_vacuum_sites(shells_to_keep=2)
         self.apply_site_pruning(kept_ids)
+        self.reindex_sites()
+        self.num_sites = len(self.sites)
         self.update_mat_indices()
 
         print(f"Vacuum pruning: removed {len(removed_ids)} sites")
@@ -182,6 +182,28 @@ class System:
 
         self.sites = new_sites
 
+    def reindex_sites(self):
+        old_ids = sorted(self.sites.keys())
+        old_to_new_map = {old_id: new_id for new_id, old_id in enumerate(old_ids)}
+
+        new_site_dict = {}
+
+        for old_id in old_ids:
+            site = self.sites[old_id]
+            new_id = old_to_new_map[old_id]
+
+            site.id = new_id
+
+            new_neighbors = {}
+            for nn, val in site.neighbors.items():
+                if nn in old_to_new_map:
+                    new_neighbors[old_to_new_map[nn]] = val
+            site.neighbors = new_neighbors
+
+            new_site_dict[new_id] = site
+
+        self.sites = new_site_dict
+
     def build_geometry(self):
         self.geometry= Geometry3D(lattice_type=self.geometry_params["lattice_type"],
                                    box_size=self.geometry_params["box_size"],
@@ -189,27 +211,29 @@ class System:
                                    quantum_center=self.geometry_params.get("quantum_center", (0.0, 0.0, 0.0)))
 
     def remove_dangling_site(self):
-        """remove the dangling sites, which leads to the sigularities in Posisson problem
         """
-        num_sites=len(self.sites)
-        no_neighbor =np.array([idx for idx in range(num_sites) if self.sites[idx].neighbors=={}])
-        #print(no_neighbor)
-        sites_idx=np.array(range(num_sites))
-        new_site_dict={}
-        if no_neighbor !=[]:
-            old_to_new_map={idx:nidx for nidx, idx in enumerate(np.delete(sites_idx,no_neighbor))}
-        #update site index and id
-            for nidx, idx in enumerate(np.delete(sites_idx,no_neighbor)):
-                nsite=self.sites[idx]
-                nsite.id=nidx
-                n_neighbors={}
-                #update neighbor index
-                for nn in list(nsite.neighbors.keys()):
-                    n_neighbors[old_to_new_map[nn]]=nsite.neighbors[nn]
-                nsite.neighbors=n_neighbors
-                new_site_dict[nidx]=nsite
-            self.sites=new_site_dict
-        print("%d sites have been removed from the system." %len(no_neighbor))
+        Remove dangling sites (sites with no neighbors).
+        """
+        num_sites = len(self.sites)
+
+        # find dangling site ids
+        no_neighbor = [idx for idx, site in self.sites.items()
+                    if site.neighbors == {}]
+
+        if len(no_neighbor) == 0:
+            print("0 sites have been removed from the system.")
+            return
+
+        # keep everything else
+        kept_ids = set(self.sites.keys()) - set(no_neighbor)
+
+        # apply pruning
+        self.apply_site_pruning(kept_ids)
+
+        # 🔥 now reindex in ONE place
+        self.reindex_sites()
+
+        print(f"{len(no_neighbor)} sites have been removed from the system.")
 
     def load_config(self, config_file):
         """

@@ -117,18 +117,6 @@ def update_ildos(fsc, syst, **kwargs):
     elif builder == "default":
         dataall = fsc.qsystem.get_ldos(fsc, **kwargs)
 
-        # rescale the filling according to the maximal carrier density
-        #dataall[:, 1, :] *= fsc.max_fill
-        # normalize with respect to each point
-        # shape: (N_sites, 2, N_E)
-        # E = dataall[:, 0, :]
-        # rho = dataall[:, 1, :]
-
-        # norms = np.trapz(rho, E, axis=1)
-        # norms[norms == 0] = 1  # avoid divide-by-zero
-
-        # dataall[:, 1, :] = rho / norms[:, None] * fsc.max_fill
-
         return dataall
 
     else:

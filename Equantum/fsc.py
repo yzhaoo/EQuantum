@@ -212,47 +212,40 @@ class FSC:
         self.log["Ui_l2diff"].append(np.linalg.norm(dUi))
         
 
-    def initial_Quantum(self,system,**kwarg):
-        """
-        initialize the Quantum problem without the external electristatic field, yield initial ILDOS
+    def initial_Quantum(self, system, **kwarg):
+        t0 = time.perf_counter()
+        qbuilder.site_map(self, system)
+        print("site_map:", time.perf_counter() - t0)
 
-        """
-        #initialize the site map between Qsysetm and kwant system
-        qbuilder.site_map(self,system)
-        #initialize the potential function Ufunc
-        #self.update_quantum_potential(U_cap=5*self.t)
-        qbuilder.update_U(self,system)
-        #initialize at the half-filling (since assume U=0 onsite)
-        #self.ni[self.Qsites]+=0.5*np.ones(len(self.Qsites))
-        #calculate the initial ildos
-        
+        t0 = time.perf_counter()
+        qbuilder.update_U(self, system)
+        print("update_U:", time.perf_counter() - t0)
+
+        t0 = time.perf_counter()
         new_ildos = qbuilder.update_ildos(
             self,
             system,
+            #approx = "ED", #use ED for small system, TF (kpm) for a large system
             M=256,
             eps=0.05,
             kernel="jackson",
             **kwarg
         )
+        print("update_ildos:", time.perf_counter() - t0)
 
-        # initialize full LDOS storage on global Qsites grid
+        t0 = time.perf_counter()
         nq = len(self.Qsites)
         nE = len(self.E_global)
         self.ildos = np.zeros((nq, 2, nE), dtype=float)
-
-        # fill energy axis everywhere
         self.ildos[:, 0, :] = self.E_global[None, :]
+        print("alloc+fill:", time.perf_counter() - t0)
 
-        # if quantum system is built on active region only, write back by site_id
-        q_active = self.qsystem.Qsite_ids  # ground truth ordering
-
+        t0 = time.perf_counter()
+        q_active = self.qsystem.Qsite_ids
         for local_idx, site_id in enumerate(q_active):
             global_idx = self.qsite_id_to_idx[site_id]
             self.ildos[global_idx] = new_ildos[local_idx]
-
-        print("FSC qparams:", self.qparams)
-        print("QSystem params:", self.qsystem.qparams)
-        print("The quantum problem has been initialized.")
+        print("copy back:", time.perf_counter() - t0)
 
 
     def update_qparams(self, system, qparams, ifinitial=True):
@@ -292,17 +285,37 @@ class FSC:
         self.Ui[self.Qprime]+=dUdn[0]
         self.ni[self.Qprime]+=dUdn[1]
 
-    def update_BC(self,syst,name,prop,value,ifinitial=False,FL_pinning=True):
-        for site in list(self.sites.values()):
-            if site.material==name:
-                setattr(site, prop, value)
-        self.ni=np.array([site.charge for i, site in self.sites.items()])
-        self.Ui=np.array([site.potential for i, site in self.sites.items()])
+    def update_BC(self, updates, ifinitial=False, FL_pinning=True):
+        """
+        Update boundary conditions for multiple materials and properties.
+
+        Parameters
+        ----------
+        updates : dict
+            Example:
+            {
+                'gate': {'potential': -0.3},
+                'dielectric': {'dielectric_constant': 4},
+                'backgate': {'potential': 2}
+            }
+        """
+
+        # --- apply updates ---
+        for site in self.sites.values():
+            mat = site.material
+            if mat in updates:
+                for prop, value in updates[mat].items():
+                    setattr(site, prop, value)
+
+        # --- rebuild arrays ---
+        self.ni = np.array([site.charge for site in self.sites.values()])
+        self.Ui = np.array([site.potential for site in self.sites.values()])
+
+        # --- reinitialize if needed ---
         if ifinitial:
             if FL_pinning:
                 solvers.Fermi_level_pinning(self)
             self.initial_Poisson()
-            #initialize Quantum problem
 
 
     def update_Qprime(self, tol=1e-7):
