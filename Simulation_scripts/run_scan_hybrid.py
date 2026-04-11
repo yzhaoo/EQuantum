@@ -11,7 +11,11 @@ from EQsystem import System
 
 from scan_helpers_hybrid import write_scan_manifest, run_scan
 
+pid = os.getpid()
 
+print(f"[MAIN] PID = {pid}", flush=True)
+
+    
 def density_function(z):
     spacing0 = 0.011
     k = 0.2
@@ -37,12 +41,12 @@ def main():
 
     fixed_params = {
         # Number of scan chunks / concurrent workers.
-        "Ncore": 50,
+        "Ncore": 20,
         # Cores used inside one FSC.solve(). Usually 1 for chunked parameter scans.
         "solver_Ncore": 1,
         "gate_potential": -1,
         "dielectric_constant": 4,
-        "convergence_tol": 1e-2,
+        "convergence_tol": 2e-2,
         "ldos_method": "ED",
         "eta": 0.00015,
         "M": 256,

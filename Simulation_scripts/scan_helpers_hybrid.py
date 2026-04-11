@@ -4,6 +4,7 @@ import csv
 import time
 import math
 import inspect
+import shutil
 from datetime import datetime
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
@@ -29,6 +30,29 @@ def get_function_source(func):
         return inspect.getsource(func)
     except Exception:
         return f"<source unavailable: {getattr(func, '__name__', 'anonymous')}>"
+
+
+PROGRESS_FIELDNAMES = [
+    "timestamp",
+    "phi",
+    "Vbg",
+    "outfile",
+    "converged",
+    "runtime_sec",
+    "iter_qprime",
+    "iter_poisson",
+    "iter_quantum",
+    "qprime_len",
+    "ui_maxdiff",
+    "ni_maxdiff",
+    "ildos_maxdiff",
+    "status",
+    "restart_mode",
+    "worker_pid",
+    "chunk_id",
+    "chunk_index",
+    "chunk_size",
+]
 
 
 def write_scan_manifest(
@@ -68,37 +92,48 @@ def write_scan_manifest(
         json.dump(manifest, f, indent=2)
 
 
-def append_progress_row(out_folder, row):
-    csv_path = os.path.join(out_folder, "scan_progress.csv")
+def append_progress_row(csv_path, row):
     file_exists = os.path.exists(csv_path)
-
-    fieldnames = [
-        "timestamp",
-        "phi",
-        "Vbg",
-        "outfile",
-        "converged",
-        "runtime_sec",
-        "iter_qprime",
-        "iter_poisson",
-        "iter_quantum",
-        "qprime_len",
-        "ui_maxdiff",
-        "ni_maxdiff",
-        "ildos_maxdiff",
-        "status",
-        "restart_mode",
-        "worker_pid",
-        "chunk_id",
-        "chunk_index",
-        "chunk_size",
-    ]
-
     with open(csv_path, "a", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer = csv.DictWriter(f, fieldnames=PROGRESS_FIELDNAMES)
         if not file_exists:
             writer.writeheader()
         writer.writerow(row)
+        f.flush()
+
+
+def merge_chunk_progress_files(out_folder, chunk_ids):
+    merged_csv = os.path.join(out_folder, "scan_progress.csv")
+    rows = []
+
+    for chunk_id in sorted(chunk_ids):
+        chunk_csv = os.path.join(
+            out_folder,
+            f"_chunk_progress_{int(chunk_id):03d}.csv",
+        )
+        if not os.path.exists(chunk_csv):
+            continue
+
+        with open(chunk_csv, "r", newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                rows.append(row)
+
+    def _sort_key(row):
+        try:
+            return (
+                int(row["chunk_id"]),
+                int(row["chunk_index"]),
+            )
+        except Exception:
+            return (10**9, 10**9)
+
+    rows.sort(key=_sort_key)
+
+    with open(merged_csv, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=PROGRESS_FIELDNAMES)
+        writer.writeheader()
+        writer.writerows(rows)
 
 
 def reset_fsc_log(fsc):
@@ -119,9 +154,14 @@ def build_fresh_fsc(FSC_cls, syst, phi, Vbg, fixed_params):
     qparams = {"Ufunc": lambda x: 0, "phi": phi}
 
     fsc = FSC_cls(syst, ifinitial=False, qparams=qparams)
-    fsc.update_BC(syst, "gate", "potential", fixed_params["gate_potential"])
-    fsc.update_BC(syst, "dielectric", "dielectric_constant", fixed_params["dielectric_constant"])
-    fsc.update_BC(syst, "backgate", "potential", Vbg, ifinitial=True)
+
+    boundary_condition = {
+        "gate": {"potential": fixed_params["gate_potential"]},
+        "dielectric": {"dielectric_constant": fixed_params["dielectric_constant"]},
+        "backgate": {"potential": Vbg},
+    }
+    fsc.update_BC(updates=boundary_condition, ifinitial=True)
+
     fsc.Ncore = int(fixed_params.get("solver_Ncore", 1))
     fsc.convergence_tol = fixed_params["convergence_tol"]
     reset_fsc_log(fsc)
@@ -134,14 +174,36 @@ def update_existing_fsc(fsc, syst, phi, Vbg):
     fsc.Qp_in_Q = {ii: fsc.qsite_id_to_idx[sid] for ii, sid in enumerate(fsc.Qprime)}
     fsc.N_indices = syst.N_indices.copy()
     fsc.D_indices = syst.D_indices.copy()
+
     fsc.update_qparams(syst, {"phi": phi}, ifinitial=False)
-    fsc.update_BC(syst, "backgate", "potential", Vbg, ifinitial=True)
+
+    boundary_condition = {
+        "backgate": {"potential": Vbg},
+    }
+    fsc.update_BC(updates=boundary_condition, ifinitial=True)
     reset_fsc_log(fsc)
 
 
-def _solve_current_point(fsc, syst, out_folder, fixed_params, outfile_prefix):
-    snapshot_folder = os.path.join(out_folder, f"_worker_tmp_{outfile_prefix}_pid_{os.getpid()}")
+def _cleanup_point_snapshots(snapshot_folder):
+    if not os.path.isdir(snapshot_folder):
+        return
+    for fname in os.listdir(snapshot_folder):
+        if fname.endswith(".npz") and fname != "run_static.npz":
+            try:
+                os.remove(os.path.join(snapshot_folder, fname))
+            except OSError:
+                pass
+
+
+def _solve_current_point(fsc, syst, snapshot_folder, fixed_params):
     os.makedirs(snapshot_folder, exist_ok=True)
+
+    _cleanup_point_snapshots(snapshot_folder)
+
+    before = {
+        f for f in os.listdir(snapshot_folder)
+        if f.endswith(".npz") and f != "run_static.npz"
+    }
 
     fsc.solve(
         syst,
@@ -156,16 +218,20 @@ def _solve_current_point(fsc, syst, out_folder, fixed_params, outfile_prefix):
         kernel=fixed_params["kernel"],
     )
 
-    new_files = sorted(
+    after = {
         f for f in os.listdir(snapshot_folder)
         if f.endswith(".npz") and f != "run_static.npz"
-    )
+    }
+    new_files = sorted(after - before)
+
     if len(new_files) != 1:
-        raise RuntimeError(f"Expected exactly 1 new snapshot, got {new_files}")
+        raise RuntimeError(
+            f"Expected exactly 1 new point snapshot in {snapshot_folder}, got {new_files}"
+        )
 
     latest_file = new_files[0]
     src = os.path.join(snapshot_folder, latest_file)
-    return src, latest_file, snapshot_folder
+    return src, latest_file
 
 
 def _run_chunk(
@@ -179,6 +245,17 @@ def _run_chunk(
     jobs,
 ):
     worker_pid = os.getpid()
+
+    snapshot_folder = os.path.join(
+        out_folder,
+        f"_worker_tmp_chunk_{chunk_id:03d}_pid_{worker_pid}",
+    )
+    os.makedirs(snapshot_folder, exist_ok=True)
+
+    chunk_csv = os.path.join(out_folder, f"_chunk_progress_{chunk_id:03d}.csv")
+    if os.path.exists(chunk_csv):
+        os.remove(chunk_csv)
+
     syst = System_cls(
         geoparams,
         config_file=config_file,
@@ -186,76 +263,97 @@ def _run_chunk(
         quantum_builder="default",
     )
 
-    rows = []
     fsc = None
     need_fresh_fsc = True
     chunk_size = len(jobs)
+    rows = []
 
-    for chunk_index, (phi, Vbg) in enumerate(jobs, start=1):
-        phi = float(phi)
-        Vbg = float(Vbg)
-        t0 = time.perf_counter()
-        status = "ok"
-        converged = False
-        outfile = f"phi_{phi:.4f}_Vbg_{Vbg:.4f}.npz"
-        restart_mode = "fresh" if need_fresh_fsc or fsc is None else "warm"
+    print(
+        f"[WORKER chunk={chunk_id} pid={worker_pid}] start with {chunk_size} points, tmp={snapshot_folder}",
+        flush=True,
+    )
 
-        try:
-            if need_fresh_fsc or fsc is None:
-                fsc = build_fresh_fsc(FSC_cls, syst, phi, Vbg, fixed_params)
-                need_fresh_fsc = False
-                restart_mode = "fresh"
-            else:
-                update_existing_fsc(fsc, syst, phi, Vbg)
-                restart_mode = "warm"
-
-            prefix = f"chunk_{chunk_id}_idx_{chunk_index}_phi_{phi:.4f}_Vbg_{Vbg:.4f}"
-            src, latest_file, snapshot_folder = _solve_current_point(
-                fsc,
-                syst,
-                out_folder,
-                fixed_params,
-                prefix,
-            )
-
-            dst = os.path.join(out_folder, outfile)
-            if os.path.abspath(src) != os.path.abspath(dst):
-                os.replace(src, dst)
+    try:
+        for chunk_index, (phi, Vbg) in enumerate(jobs, start=1):
+            phi = float(phi)
+            Vbg = float(Vbg)
+            t0 = time.perf_counter()
+            status = "ok"
+            converged = False
+            outfile = f"phi_{phi:.4f}_Vbg_{Vbg:.4f}.npz"
+            restart_mode = "fresh" if need_fresh_fsc or fsc is None else "warm"
 
             try:
-                os.rmdir(snapshot_folder)
-            except OSError:
-                pass
+                if need_fresh_fsc or fsc is None:
+                    fsc = build_fresh_fsc(FSC_cls, syst, phi, Vbg, fixed_params)
+                    need_fresh_fsc = False
+                    restart_mode = "fresh"
+                else:
+                    update_existing_fsc(fsc, syst, phi, Vbg)
+                    restart_mode = "warm"
 
-            converged = "_conv" in latest_file
+                src, latest_file = _solve_current_point(
+                    fsc,
+                    syst,
+                    snapshot_folder,
+                    fixed_params,
+                )
 
-        except Exception as e:
-            status = f"error: {type(e).__name__}: {e}"
-            need_fresh_fsc = True
+                dst = os.path.join(out_folder, outfile)
+                if os.path.abspath(src) != os.path.abspath(dst):
+                    os.replace(src, dst)
 
-        runtime_sec = time.perf_counter() - t0
+                converged = "_conv" in latest_file
 
-        rows.append({
-            "timestamp": datetime.now().isoformat(),
-            "phi": phi,
-            "Vbg": Vbg,
-            "outfile": outfile if status == "ok" else "",
-            "converged": converged,
-            "runtime_sec": runtime_sec,
-            "iter_qprime": len(fsc.log["Qprime_len"]) if fsc is not None else "",
-            "iter_poisson": len(fsc.log["timing_poisson"]) if fsc is not None else "",
-            "iter_quantum": len(fsc.log["timing_quantum"]) if fsc is not None else "",
-            "qprime_len": len(fsc.Qprime) if (fsc is not None and hasattr(fsc, "Qprime")) else "",
-            "ui_maxdiff": fsc.log["Ui_maxdiff"][-1] if (fsc is not None and len(fsc.log["Ui_maxdiff"])) else "",
-            "ni_maxdiff": fsc.log["ni_maxdiff"][-1] if (fsc is not None and len(fsc.log["ni_maxdiff"])) else "",
-            "ildos_maxdiff": fsc.log["ildos_maxdiff"][-1] if (fsc is not None and len(fsc.log["ildos_maxdiff"])) else "",
-            "status": status,
-            "restart_mode": restart_mode,
-            "worker_pid": worker_pid,
-            "chunk_id": chunk_id,
-            "chunk_index": chunk_index,
-            "chunk_size": chunk_size,
-        })
+            except Exception as e:
+                status = f"error: {type(e).__name__}: {e}"
+                need_fresh_fsc = True
+                print(
+                    f"[WORKER chunk={chunk_id} pid={worker_pid}] "
+                    f"phi={phi:.4f}, Vbg={Vbg:.4f} FAILED: {status}",
+                    flush=True,
+                )
+
+            runtime_sec = time.perf_counter() - t0
+
+            row = {
+                "timestamp": datetime.now().isoformat(),
+                "phi": phi,
+                "Vbg": Vbg,
+                "outfile": outfile if status == "ok" else "",
+                "converged": converged,
+                "runtime_sec": runtime_sec,
+                "iter_qprime": len(fsc.log["Qprime_len"]) if fsc is not None else "",
+                "iter_poisson": len(fsc.log["timing_poisson"]) if fsc is not None else "",
+                "iter_quantum": len(fsc.log["timing_quantum"]) if fsc is not None else "",
+                "qprime_len": len(fsc.Qprime) if (fsc is not None and hasattr(fsc, "Qprime")) else "",
+                "ui_maxdiff": fsc.log["Ui_maxdiff"][-1] if (fsc is not None and len(fsc.log["Ui_maxdiff"])) else "",
+                "ni_maxdiff": fsc.log["ni_maxdiff"][-1] if (fsc is not None and len(fsc.log["ni_maxdiff"])) else "",
+                "ildos_maxdiff": fsc.log["ildos_maxdiff"][-1] if (fsc is not None and len(fsc.log["ildos_maxdiff"])) else "",
+                "status": status,
+                "restart_mode": restart_mode,
+                "worker_pid": worker_pid,
+                "chunk_id": chunk_id,
+                "chunk_index": chunk_index,
+                "chunk_size": chunk_size,
+            }
+
+            append_progress_row(chunk_csv, row)
+            rows.append(row)
+
+            print(
+                f"[WORKER chunk={chunk_id} pid={worker_pid}] "
+                f"[{chunk_index}/{chunk_size}] phi={phi:.4f}, Vbg={Vbg:.4f}, "
+                f"restart={restart_mode}, status={status}",
+                flush=True,
+            )
+
+    finally:
+        shutil.rmtree(snapshot_folder, ignore_errors=True)
+        print(
+            f"[WORKER chunk={chunk_id} pid={worker_pid}] cleaned tmp={snapshot_folder}",
+            flush=True,
+        )
 
     return rows
 
@@ -287,9 +385,18 @@ def run_scan(
     chunks = _partition_jobs(phis, Vbgs, max_workers)
     total_points = sum(len(jobs) for _, jobs in chunks)
 
-    print(f"Launching hybrid parameter scan with {len(chunks)} workers over {total_points} points.")
-    print("Each worker gets one chunk: first point is cold-started, later points in the same chunk use warm start.")
-    print(f"Internal solver cores per point: {int(fixed_params.get('solver_Ncore', 1))}")
+    print(
+        f"Launching hybrid parameter scan with {len(chunks)} workers over {total_points} points.",
+        flush=True,
+    )
+    print(
+        "Each worker gets one chunk: first point is cold-started, later points in the same chunk use warm start.",
+        flush=True,
+    )
+    print(
+        f"Internal solver cores per point: {int(fixed_params.get('solver_Ncore', 1))}",
+        flush=True,
+    )
 
     with ProcessPoolExecutor(max_workers=len(chunks)) as executor:
         futures = {
@@ -308,42 +415,30 @@ def run_scan(
         }
 
         completed_points = 0
+        finished_chunk_ids = []
+
         for future in as_completed(futures):
             chunk_id, chunk_size = futures[future]
-            print(f"\n=== Chunk {chunk_id} finished ({chunk_size} points) ===")
+            print(f"\n=== Chunk {chunk_id} finished ({chunk_size} points) ===", flush=True)
+            finished_chunk_ids.append(chunk_id)
+
             try:
                 rows = future.result()
             except Exception as e:
-                rows = [{
-                    "timestamp": datetime.now().isoformat(),
-                    "phi": "",
-                    "Vbg": "",
-                    "outfile": "",
-                    "converged": False,
-                    "runtime_sec": "",
-                    "iter_qprime": "",
-                    "iter_poisson": "",
-                    "iter_quantum": "",
-                    "qprime_len": "",
-                    "ui_maxdiff": "",
-                    "ni_maxdiff": "",
-                    "ildos_maxdiff": "",
-                    "status": f"error: ChunkFailure: {type(e).__name__}: {e}",
-                    "restart_mode": "",
-                    "worker_pid": "",
-                    "chunk_id": chunk_id,
-                    "chunk_index": "",
-                    "chunk_size": chunk_size,
-                }]
+                print(
+                    f"chunk {chunk_id} status=error: ChunkFailure: {type(e).__name__}: {e}",
+                    flush=True,
+                )
+                continue
 
-            for row in rows:
-                append_progress_row(out_folder, row)
-                if row["phi"] != "":
-                    completed_points += 1
-                    print(
-                        f"[{completed_points}/{total_points}] phi={float(row['phi']):.4f}, "
-                        f"Vbg={float(row['Vbg']):.4f}, restart={row['restart_mode']}, "
-                        f"status={row['status']}, pid={row['worker_pid']}"
-                    )
-                else:
-                    print(f"chunk {chunk_id} status={row['status']}")
+            completed_points += len([r for r in rows if r["phi"] != ""])
+            print(
+                f"Completed points so far: {completed_points}/{total_points}",
+                flush=True,
+            )
+
+    merge_chunk_progress_files(out_folder, [chunk_id for chunk_id, _ in chunks])
+    print(
+        f"Merged per-chunk progress files into {os.path.join(out_folder, 'scan_progress.csv')}",
+        flush=True,
+    )
