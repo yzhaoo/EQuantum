@@ -19,7 +19,7 @@ import matplotlib.colors as mcolors
 from IPython.display import clear_output
 
 class FSC:
-    def __init__(self, system, ifinitial=True,qparams=None,convergence_tol=1e-8, max_iter=50,FL_pinning=True,Ncore=1):
+    def __init__(self, system, ifinitial=True,qparams=None,convergence_tol=[1e-8,1e-6], max_iter=50,FL_pinning=True,Ncore=1):
         """
         Initialize the self-consistent solver.
 
@@ -89,7 +89,10 @@ class FSC:
             "Ui_l2diff": [],
             "ni_maxdiff": [],
             "ni_l2diff": [],
+            "ni_reldiff": [],
             "ildos_maxdiff": [],
+            "ildos_l2diff":[],
+            "ildos_meanreldiff":[],
             "timing_poisson": [],
             "timing_quantum": [],
             "timing_total": [],
@@ -128,7 +131,10 @@ class FSC:
             "Ui_l2diff": [],
             "ni_maxdiff": [],
             "ni_l2diff": [],
+            "ni_reldiff": [],
             "ildos_maxdiff": [],
+            "ildos_l2diff":[],
+            "ildos_meanreldiff":[],
             "timing_poisson": [],
             "timing_quantum": [],
             "timing_total": [],
@@ -210,6 +216,8 @@ class FSC:
         self.log["ni_l2diff"].append(np.linalg.norm(dni)/np.sqrt(pre_ni.size))
         self.log["Ui_maxdiff"].append(np.max(np.abs(dUi)))
         self.log["Ui_l2diff"].append(np.linalg.norm(dUi)/np.sqrt(pre_Ui.size))
+        rel = np.mean(np.abs(dni) / (pre_ni + 1e-30))
+        self.log["ni_reldiff"].append(rel)
         
 
     def initial_Quantum(self, system, **kwarg):
@@ -261,7 +269,7 @@ class FSC:
 
 
     def update_Quantum(self, system, **kwarg):
-        pre_ildos = self.ildos.copy()
+        pre_ildos = self.ildos.copy()[:,1,:]
 
         qbuilder.update_U(self, system)
         new_ildos = qbuilder.update_ildos(self, system, **kwarg)
@@ -271,20 +279,46 @@ class FSC:
             global_idx = self.qsite_id_to_idx[site_id]
             self.ildos[global_idx] = new_ildos[local_idx]
 
-        dildos = self.ildos - pre_ildos
+        dildos = self.ildos[:,1,:] - pre_ildos
         self.log["ildos_maxdiff"].append(np.max(np.abs(dildos)))
+        self.log["ildos_l2diff"].append(np.linalg.norm(dildos)/np.sqrt(pre_ildos.size))
+        
+
+        eps = 1e-12
+
+        self.log["ildos_maxdiff"].append(np.max(np.abs(dildos)))
+
+        mask = np.abs(pre_ildos) > eps
+        if np.any(mask):
+            rel = np.abs(dildos[mask]) / np.abs(pre_ildos[mask])
+            self.log["ildos_meanreldiff"].append(np.mean(rel))
+        else:
+            self.log["ildos_meanreldiff"].append(0.0)
 
 
 
     def local_solver(self):
-        if self.local_update_count==0:
-            alpha=1
-        else:
-            alpha=0.2
-        dUdn=solvers.local_solver(self,alpha=alpha)
-        print(np.mean(dUdn[0]),np.mean(dUdn[1]))
-        self.Ui[self.Qprime]+=dUdn[0]
-        self.ni[self.Qprime]+=dUdn[1]
+        alpha = 1.0 if self.local_update_count == 0 else 0.4
+
+        dUdn = solvers.local_solver(self, alpha=alpha)
+        dUi_q = dUdn[0]
+        dni_q = dUdn[1]
+
+        print(np.linalg.norm(dUi_q), np.linalg.norm(dni_q))
+        pre_ni=self.ni[self.Qprime].copy()
+        self.Ui[self.Qprime] += dUi_q
+        self.ni[self.Qprime] = pre_ni+dni_q
+
+        self.log["Ui_maxdiff"].append(np.max(np.abs(dUi_q)))
+        self.log["Ui_l2diff"].append(np.linalg.norm(dUi_q) / np.sqrt(dUi_q.size))
+
+        self.log["ni_maxdiff"].append(np.max(np.abs(dni_q)))
+        self.log["ni_l2diff"].append(np.linalg.norm(dni_q) / np.sqrt(dni_q.size))
+        rel = np.mean(np.abs(dni_q) / (pre_ni + 1e-30))
+        self.log["ni_reldiff"].append(rel)
+        
+
+        self.local_update_count += 1
 
     def update_BC(self, updates, ifinitial=False, FL_pinning=True):
         """
@@ -345,17 +379,64 @@ class FSC:
         save=True,
         snapshot_every=5,
         ldos_method="TF",
-        snapshot_mode="iteration",
+        snapshot_mode="iteration",   # "iteration", "step", or "final_only"
         snapshot_folder="fsc_logs",
         max_total_iter=30,
         save_ildos=True,
-        stuck_switch_after=5,
+        qprime_stable_by="set",      # "len" or "set"
         **kwarg
     ):
-        def converged():
-            if len(self.log.get("ni_l2diff", [])) == 0:
-                return False
-            return self.log["ni_l2diff"][-1] < self.convergence_tol
+        """
+        Flowchart-style self-consistent loop:
+
+        1. Update Q / Q' decomposition
+        - if not stable, repeat Step I
+        2. Update Poisson problem
+        - must run at least once for each stable decomposition
+        - if n[U] not converged, repeat Step II
+        3. Update Quantum / ILDOS problem
+        - if ILDOS not converged, repeat Step III
+        4. finish when all are converged
+
+        Assumptions:
+        - self.update_Poisson() updates self.log entries such as Ui_* and/or ni_* as needed
+        - self.update_Quantum() updates self.log entries such as ni_* and ildos_* as needed
+        - convergence metrics are already logged inside those solver calls
+        """
+
+        def converged_nU():
+            """
+            Has n[U] converged?
+            Main criterion uses ni_l2diff from the internal solver log.
+            """
+            vals = self.log.get("ni_reldiff", [])
+            return len(vals) > 0 and vals[-1] < self.convergence_tol[0]
+
+        def converged_ildos():
+            """
+            Has ILDOS converged?
+            Prefer an explicit ILDOS metric if available.
+            Fallback to ni_l2diff if no ILDOS-specific log exists.
+            """
+            if len(self.log.get("ildos_meanreldiff", [])) > 0:
+                return self.log["ildos_meanreldiff"][-1] < self.convergence_tol[1]
+
+            # fallback if no dedicated ILDOS metric exists yet
+            vals = self.log.get("ni_reldiff", [])
+            return len(vals) > 0 and vals[-1] < self.convergence_tol[0]
+
+        def qprime_is_stable(before, after):
+            """
+            Is Q \\ Q' decomposition OK?
+            """
+            if qprime_stable_by == "len":
+                return len(before) == len(after)
+
+            # safer default: compare the set/content, not just the length
+            try:
+                return np.array_equal(np.sort(np.asarray(before)), np.sort(np.asarray(after)))
+            except Exception:
+                return list(before) == list(after)
 
         def save_final(tag, it):
             if save:
@@ -365,13 +446,15 @@ class FSC:
                     save_ildos=save_ildos
                 )
 
-        def register_solver(name):
-            nonlocal last_solver, same_solver_count
-            if last_solver == name:
-                same_solver_count += 1
-            else:
-                last_solver = name
-                same_solver_count = 1
+        def build_quantum_kwargs():
+            quantum_kwargs = {
+                "approx": ldos_method,
+                "Ncore": self.Ncore,
+                **kwarg,
+            }
+            if ldos_method == "kmeanssample":
+                quantum_kwargs["num_sample"] = int(5 * self.Ncore)
+            return quantum_kwargs
 
         # save static metadata once
         if save:
@@ -379,38 +462,29 @@ class FSC:
 
         save_intermediate = (snapshot_mode != "final_only")
 
+        # initialize active region once
         self.update_Qprime()
         if len(self.Qprime) == 0:
             raise RuntimeError("Qprime is empty: the active quantum region vanished.")
 
-        iter_num = [0, 0, 0]   # [Qprime updates, Poisson updates, Quantum updates]
-        # ---------------------------------
-        # Initial forced Poisson priming step
-        # ---------------------------------
-        # t0 = time.perf_counter()
-        # self.update_Poisson()
-        # self.log["timing_poisson"].append(time.perf_counter() - t0)
-        # iter_num[1] += 1
+        # iter counters: [Step I, Step II, Step III]
+        iter_num = [0, 0, 0]
 
-        # if save and save_intermediate and snapshot_mode == "step":
-        #     self.save_snapshot(
-        #         f"iter_{sum(iter_num):04d}_poisson_init",
-        #         folder=snapshot_folder,
-        #         save_ildos=save_ildos
-        #     )
-        # new: track consecutive solver usage
-        last_solver = None
-        same_solver_count = 0
+        # state flags for the flowchart logic
+        poisson_ready_for_current_qprime = False
+        quantum_ready_for_current_poisson = False
 
         while True:
             it = sum(iter_num)
             t_iter0 = time.perf_counter()
 
-            print("Iteration counts:", iter_num)
-            print("Last solver / streak:", last_solver, same_solver_count)
+            print("Iteration counts [Step I, Step II, Step III]:", iter_num)
             if hasattr(self, "print_iteration_summary"):
                 self.print_iteration_summary(it)
 
+            # ----------------------------
+            # Iteration-level snapshot
+            # ----------------------------
             if save and save_intermediate and snapshot_mode == "iteration":
                 if snapshot_every is not None and snapshot_every > 0:
                     if it % snapshot_every == 0:
@@ -421,7 +495,7 @@ class FSC:
                         )
 
             # =================================
-            # Step 1: local electrostatic update
+            # local electrostatic update
             # =================================
             self.local_solver()
 
@@ -433,214 +507,114 @@ class FSC:
                 )
 
             # =================================
-            # Step 2: update Qprime partition
+            # Step I: update Qprime partition
             # =================================
-            qprime_before = len(self.Qprime)
+            qprime_before = np.asarray(self.Qprime).copy()
             self.update_Qprime()
-            qprime_after = len(self.Qprime)
-            self.log["Qprime_len"].append(qprime_after)
+            qprime_after = np.asarray(self.Qprime).copy()
+            self.log.setdefault("Qprime_len", []).append(len(qprime_after))
 
-            if save and save_intermediate and snapshot_mode == "step":
-                self.save_snapshot(
-                    f"iter_{it:04d}_qprime",
-                    folder=snapshot_folder,
-                    save_ildos=save_ildos
-                )
+            # if save and save_intermediate and snapshot_mode == "step":
+            #     self.save_snapshot(
+            #         f"iter_{it:04d}_stepI_qprime",
+            #         folder=snapshot_folder,
+            #         save_ildos=save_ildos
+            #     )
 
-            if qprime_after != qprime_before:
+            # If Qprime changed, decomposition is not yet stable.
+            # Follow the flowchart: repeat Step I.
+            if not qprime_is_stable(qprime_before, qprime_after):
+                # Optional decomposition-side updates you already had
                 psolver.calculate_delta(self)
 
                 t0 = time.perf_counter()
                 self.Ci = psolver.solve_capacitance(self)
-                self.log["timing_poisson"].append(time.perf_counter() - t0)
+                self.log.setdefault("timing_poisson", []).append(time.perf_counter() - t0)
 
                 iter_num[0] += 1
-                self.log["timing_total"].append(time.perf_counter() - t_iter0)
+
+                # Qprime changed => Poisson/Quantum states are no longer trusted
+                poisson_ready_for_current_qprime = False
+                quantum_ready_for_current_poisson = False
+
+                self.log.setdefault("timing_total", []).append(time.perf_counter() - t_iter0)
 
                 if sum(iter_num) >= max_total_iter:
-                    print("Reached maximum iteration count.")
+                    print("Reached maximum iteration count during Step I.")
                     save_final("max", it)
                     break
 
                 continue
 
             # =================================
-            # Step 3: stuck-solver safeguard
+            # Step II: update Poisson problem
+            # Must happen at least once after Qprime becomes stable.
+            # Then keep doing it until n[U] is converged.
             # =================================
-            if same_solver_count >= stuck_switch_after:
-                if last_solver == "poisson":
-                    print(f"Poisson used {same_solver_count} times in a row -> force one Quantum step")
-                    t0 = time.perf_counter()
-                    quantum_kwargs = {
-                        "approx": ldos_method,
-                        "Ncore": self.Ncore,
-                        **kwarg,
-                    }
-                    if ldos_method == "kmeanssample":
-                        quantum_kwargs["num_sample"] = int(5 * self.Ncore)
-
-                    self.update_Quantum(system, **quantum_kwargs)
-                    self.log["timing_quantum"].append(time.perf_counter() - t0)
-
-                    if save and save_intermediate and snapshot_mode == "step":
-                        self.save_snapshot(
-                            f"iter_{it:04d}_quantum_forced",
-                            folder=snapshot_folder,
-                            save_ildos=save_ildos
-                        )
-
-                    iter_num[2] += 1
-                    register_solver("quantum")
-                    self.log["timing_total"].append(time.perf_counter() - t_iter0)
-
-                    if sum(iter_num) >= max_total_iter:
-                        print("Reached maximum iteration count.")
-                        save_final("max", it)
-                        break
-
-                    continue
-
-                elif last_solver == "quantum":
-                    print(f"Quantum used {same_solver_count} times in a row -> force one Poisson step")
-                    t0 = time.perf_counter()
-                    self.update_Poisson()
-                    self.log["timing_poisson"].append(time.perf_counter() - t0)
-
-                    if save and save_intermediate and snapshot_mode == "step":
-                        self.save_snapshot(
-                            f"iter_{it:04d}_poisson_forced",
-                            folder=snapshot_folder,
-                            save_ildos=save_ildos
-                        )
-
-                    iter_num[1] += 1
-                    register_solver("poisson")
-                    self.log["timing_total"].append(time.perf_counter() - t_iter0)
-
-                    if sum(iter_num) >= max_total_iter:
-                        print("Reached maximum iteration count.")
-                        save_final("max", it)
-                        break
-
-                    continue
-
-            # =================================
-            # Step 4: normal tol-controlled decision
-            # =================================
-            need_poisson = (
-                len(self.log.get("ni_l2diff", [])) == 0
-                or self.log["ni_l2diff"][-1] > self.convergence_tol
-            )
-
-            if need_poisson:
+            if (not poisson_ready_for_current_qprime) or (not converged_nU()):
                 t0 = time.perf_counter()
                 self.update_Poisson()
-                self.log["timing_poisson"].append(time.perf_counter() - t0)
+                self.log.setdefault("timing_poisson", []).append(time.perf_counter() - t0)
 
                 if save and save_intermediate and snapshot_mode == "step":
+                    tag = "stepII_poisson_init" if not poisson_ready_for_current_qprime else "stepII_poisson"
                     self.save_snapshot(
-                        f"iter_{it:04d}_poisson",
+                        f"iter_{it:04d}_{tag}",
                         folder=snapshot_folder,
                         save_ildos=save_ildos
                     )
 
                 iter_num[1] += 1
-                register_solver("poisson")
-                self.log["timing_total"].append(time.perf_counter() - t_iter0)
+                poisson_ready_for_current_qprime = True
+
+                # A new Poisson environment invalidates previous quantum convergence
+                quantum_ready_for_current_poisson = False
+
+                self.log.setdefault("timing_total", []).append(time.perf_counter() - t_iter0)
 
                 if sum(iter_num) >= max_total_iter:
-                    print("Reached maximum iteration count.")
+                    print("Reached maximum iteration count during Step II.")
                     save_final("max", it)
                     break
 
                 continue
 
             # =================================
-            # Step 5: normal Quantum update
+            # Step III: update Quantum / ILDOS problem
+            # Must happen at least once after Poisson is accepted.
+            # Then keep doing it until ILDOS is converged.
             # =================================
-            t0 = time.perf_counter()
-            quantum_kwargs = {
-                "approx": ldos_method,
-                "Ncore": self.Ncore,
-                **kwarg,
-            }
-
-            if ldos_method == "kmeanssample":
-                quantum_kwargs["num_sample"] = int(5 * self.Ncore)
-
-            self.update_Quantum(system, **quantum_kwargs)
-            self.log["timing_quantum"].append(time.perf_counter() - t0)
-
-            if save and save_intermediate and snapshot_mode == "step":
-                self.save_snapshot(
-                    f"iter_{it:04d}_quantum",
-                    folder=snapshot_folder,
-                    save_ildos=save_ildos
-                )
-
-            iter_num[2] += 1
-            register_solver("quantum")
-            self.log["timing_total"].append(time.perf_counter() - t_iter0)
-
-            # =================================
-            # Step 6: convergence verification
-            # =================================
-            if converged() and iter_num[2] > 3:
+            if (not quantum_ready_for_current_poisson) or (not converged_ildos()):
                 t0 = time.perf_counter()
-                self.update_Poisson()
-                self.log["timing_poisson"].append(time.perf_counter() - t0)
+                self.update_Quantum(system, **build_quantum_kwargs())
+                self.log.setdefault("timing_quantum", []).append(time.perf_counter() - t0)
 
                 if save and save_intermediate and snapshot_mode == "step":
+                    tag = "stepIII_quantum_init" if not quantum_ready_for_current_poisson else "stepIII_quantum"
                     self.save_snapshot(
-                        f"iter_{it:04d}_poisson_verify",
-                        folder=snapshot_folder,
-                        save_ildos=save_ildos
-                    )
-
-                iter_num[1] += 1
-                register_solver("poisson")
-                self.log["timing_total"].append(time.perf_counter() - t_iter0)
-
-                t0 = time.perf_counter()
-                quantum_kwargs = {
-                    "approx": ldos_method,
-                    "Ncore": self.Ncore,
-                    **kwarg,
-                }
-
-                if ldos_method == "kmeanssample":
-                    quantum_kwargs["num_sample"] = int(5 * self.Ncore)
-
-                self.update_Quantum(system, **quantum_kwargs)
-                self.log["timing_quantum"].append(time.perf_counter() - t0)
-
-                if save and save_intermediate and snapshot_mode == "step":
-                    self.save_snapshot(
-                        f"iter_{it:04d}_quantum_verify",
+                        f"iter_{it:04d}_{tag}",
                         folder=snapshot_folder,
                         save_ildos=save_ildos
                     )
 
                 iter_num[2] += 1
-                register_solver("quantum")
-                self.log["timing_total"].append(time.perf_counter() - t_iter0)
+                quantum_ready_for_current_poisson = True
 
-                if converged():
-                    print("FSC converged: ni_l2diff remains below tolerance after final Poisson verification.")
-                    save_final("converged", it)
-                    break
+                self.log.setdefault("timing_total", []).append(time.perf_counter() - t_iter0)
 
                 if sum(iter_num) >= max_total_iter:
-                    print("Reached maximum iteration count.")
+                    print("Reached maximum iteration count during Step III.")
                     save_final("max", it)
                     break
 
                 continue
 
-            if sum(iter_num) >= max_total_iter:
-                print("Reached maximum iteration count.")
-                save_final("max", it)
-                break
+            # =================================
+            # All gates passed
+            # =================================
+            print("FSC converged: Q/Q' stable, n[U] converged, and ILDOS converged.")
+            save_final("converged", it)
+            break
 
     def save_Uini(self,Uis,nis,ildoss,filename):
         mdic={}
@@ -849,16 +823,18 @@ class FSC:
         print(f"\n--- Iteration {iter_num} ---")
         print(f"Qprime size   : {len(self.Qprime)}")
 
-        if self.log.get("Ui_maxdiff"):
-            print(f"max |ΔU|      : {self.log['Ui_maxdiff'][-1]:.3e}")
-        if self.log.get("Ui_l2diff"):
-            print(f"max |ΔU| norm  : {self.log['Ui_l2diff'][-1]:.3e}")
         if self.log.get("ni_maxdiff"):
             print(f"max |Δn|      : {self.log['ni_maxdiff'][-1]:.3e}")
         if self.log.get("ni_l2diff"):
-            print(f"max |Δn| norm  : {self.log['ni_l2diff'][-1]:.3e}")
+            print(f"|Δn| per site  : {self.log['ni_l2diff'][-1]:.3e}")
+        if self.log.get("ni_reldiff"):
+            print(f"|Δn| per site % : {self.log['ni_reldiff'][-1]:.3e}")
         if self.log.get("ildos_maxdiff"):
             print(f"max |ΔILDOS|  : {self.log['ildos_maxdiff'][-1]:.3e}")
+        if self.log.get("ildos_l2diff"):
+            print(f"|ΔILDOS| per site  : {self.log['ildos_l2diff'][-1]:.3e}")
+        if self.log.get("ildos_meanreldiff"):
+            print(f"|ΔILDOS| per site % : {self.log['ildos_meanreldiff'][-1]:.3e}")
 
         if self.log.get("timing_poisson"):
             print(f"last Poisson  : {self.log['timing_poisson'][-1]:.3f} s")

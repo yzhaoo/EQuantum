@@ -620,7 +620,7 @@ def ldos_cut_plot(snapshot_name, cut_direction, cut_center, cut_width):
 
     ax_hm.set_xlabel("x" if cut_direction == "x" else "y")
     ax_hm.set_ylabel("Energy")
-    ax_hm.set_ylim(0.5*(E0.min()),0.5*E0.max())
+    ax_hm.set_ylim((0.3*E0.min()),0.3*E0.max())
     ax_hm.set_title("LDOS heatmap along line cut")
     fig_hm.tight_layout()
     return pn.pane.Matplotlib(fig_hm, tight=True)
