@@ -4,3 +4,6 @@ nohup.out
 Simulation_scripts/logs
 
 eqaunt_env.yml
+
+/__pycache__
+EQuantum/__pycache__
