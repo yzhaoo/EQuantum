@@ -1,9 +1,11 @@
+# Workspace / logs
 EQuantum.code-workspace
-nohup.out
 nohup.out
 Simulation_scripts/logs
 
+# Environment
 eqaunt_env.yml
 
-/__pycache__
-EQuantum/__pycache__
+# Python cache
+__pycache__/
+*.py[cod]
