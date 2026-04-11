@@ -1,8 +1,15 @@
-import kwant
 import numpy as np
 from tqdm import tqdm
 import scipy.linalg as sl
 from scipy.spatial import KDTree
+
+try:
+    import kwant
+except ImportError:
+    raise ImportError(
+            "Kwant solver is not available. "
+            "Install it with: conda install -c conda-forge kwant"
+        )
 
 
 def build_system(syst, builder="kwant", **kwargs):

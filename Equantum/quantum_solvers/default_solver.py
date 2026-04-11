@@ -1,13 +1,10 @@
 import numpy as np
 from scipy.sparse import lil_matrix, csr_matrix
-from functools import partial
 from joblib import Parallel, delayed
-import scipy.sparse.linalg as spla
 import scipy.linalg as sla
 from tqdm import tqdm
-from functools import partial
 from .kpm_solver import kpm_dos, kpm_ldos, kpm_dos_many, kpm_dos_from_ldos
-from sklearn.cluster import KMeans
+
 
 class QuantumSystem:
 
@@ -333,6 +330,14 @@ class QuantumSystem:
         return_groups=False,
         **kwargs
     ):
+        # check if Kmeans is installed
+        try:
+            from sklearn.cluster import KMeans
+        except ImportError:
+            raise ImportError(
+                "some_function requires scikit-learn (KMeans). "
+                "Install it with: pip install scikit-learn"
+            )
 
         # -----------------------------
         # Adaptive KPM energy window

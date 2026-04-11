@@ -1,6 +1,4 @@
 import numpy as np
-import kwant
-
 from quantum_solvers import kwant_solver as ksolver
 from quantum_solvers.default_solver import QuantumSystem
 
