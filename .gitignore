@@ -9,3 +9,6 @@ eqaunt_env.yml
 # Python cache
 __pycache__/
 *.py[cod]
+
+# Notebooks
+scan_viewer.py
