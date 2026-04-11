@@ -207,9 +207,9 @@ class FSC:
         dUi = self.Ui - pre_Ui
 
         self.log["ni_maxdiff"].append(np.max(np.abs(dni)))
-        self.log["ni_l2diff"].append(np.linalg.norm(dni))
+        self.log["ni_l2diff"].append(np.linalg.norm(dni)/np.sqrt(pre_ni.size))
         self.log["Ui_maxdiff"].append(np.max(np.abs(dUi)))
-        self.log["Ui_l2diff"].append(np.linalg.norm(dUi))
+        self.log["Ui_l2diff"].append(np.linalg.norm(dUi)/np.sqrt(pre_Ui.size))
         
 
     def initial_Quantum(self, system, **kwarg):
@@ -384,7 +384,20 @@ class FSC:
             raise RuntimeError("Qprime is empty: the active quantum region vanished.")
 
         iter_num = [0, 0, 0]   # [Qprime updates, Poisson updates, Quantum updates]
+        # ---------------------------------
+        # Initial forced Poisson priming step
+        # ---------------------------------
+        # t0 = time.perf_counter()
+        # self.update_Poisson()
+        # self.log["timing_poisson"].append(time.perf_counter() - t0)
+        # iter_num[1] += 1
 
+        # if save and save_intermediate and snapshot_mode == "step":
+        #     self.save_snapshot(
+        #         f"iter_{sum(iter_num):04d}_poisson_init",
+        #         folder=snapshot_folder,
+        #         save_ildos=save_ildos
+        #     )
         # new: track consecutive solver usage
         last_solver = None
         same_solver_count = 0
