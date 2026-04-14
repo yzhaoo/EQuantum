@@ -19,7 +19,7 @@ import matplotlib.colors as mcolors
 from IPython.display import clear_output
 
 class FSC:
-    def __init__(self, system, ifinitial=True,qparams=None,convergence_tol=[1e-8,1e-6], max_iter=50,FL_pinning=True,Ncore=1):
+    def __init__(self, system, ifinitial=True,qparams=None,convergence_tol=[1e-8,1e-6], max_iter=50,FL_pinning=True,Ncore=1, approx="ED"):
         """
         Initialize the self-consistent solver.
 
@@ -112,7 +112,7 @@ class FSC:
             self.max_fill = system.max_fill # if self.lattice_type=="square" else self.E_to_n(bandwidth, self.qparams['phi'], self.lat_spacing*1e-6)
             #print(self.qparams['phi'],self.lat_spacing,self.bandwidth,self.max_fill,self.E_to_n(self.bandwidth,self.qparams['phi'],self.lat_spacing))
         #initialize Quantum problem
-        self.initial_Quantum(system)
+        self.initial_Quantum(system,approx=approx)
 
     def phi_to_B(self):
         return self.qparams['phi']*sc.h/sc.e/self.unit_cell_area
@@ -220,7 +220,7 @@ class FSC:
         self.log["ni_reldiff"].append(rel)
         
 
-    def initial_Quantum(self, system, **kwarg):
+    def initial_Quantum(self, system, approx="ED", **kwarg):
         t0 = time.perf_counter()
         qbuilder.site_map(self, system)
         print("site_map:", time.perf_counter() - t0)
@@ -229,16 +229,22 @@ class FSC:
         qbuilder.update_U(self, system)
         print("update_U:", time.perf_counter() - t0)
 
+        
+        quantum_kwargs = {
+            "approx": approx,
+            **kwarg,
+        }
+        if approx == "ED":
+            quantum_kwargs["eta"] =0.0003
+        else:
+            quantum_kwargs["M"]=256
+            quantum_kwargs["eps"]=0.05
+            quantum_kwargs["kernel"]="jackson"
         t0 = time.perf_counter()
         new_ildos = qbuilder.update_ildos(
             self,
             system,
-            approx = "ED",
-            eta=0.00015, #use ED for small system, TF (kpm) for a large system
-            #M=256,
-            #eps=0.05,
-            #kernel="jackson",
-            **kwarg
+            **quantum_kwargs
         )
         print("update_ildos:", time.perf_counter() - t0)
 
@@ -285,8 +291,6 @@ class FSC:
         
 
         eps = 1e-12
-
-        self.log["ildos_maxdiff"].append(np.max(np.abs(dildos)))
 
         mask = np.abs(pre_ildos) > eps
         if np.any(mask):
@@ -384,6 +388,7 @@ class FSC:
         max_total_iter=30,
         save_ildos=True,
         qprime_stable_by="set",      # "len" or "set"
+        force_switch_after=5,
         **kwarg
     ):
         """
@@ -395,44 +400,27 @@ class FSC:
         - must run at least once for each stable decomposition
         - if n[U] not converged, repeat Step II
         3. Update Quantum / ILDOS problem
+        - must run at least once after Poisson is accepted
         - if ILDOS not converged, repeat Step III
-        4. finish when all are converged
-
-        Assumptions:
-        - self.update_Poisson() updates self.log entries such as Ui_* and/or ni_* as needed
-        - self.update_Quantum() updates self.log entries such as ni_* and ildos_* as needed
-        - convergence metrics are already logged inside those solver calls
+        4. Stuck-solver safeguard
+        - after force_switch_after repeated Step II/III calls, force the other one once
+        5. finish when all are converged
         """
 
         def converged_nU():
-            """
-            Has n[U] converged?
-            Main criterion uses ni_l2diff from the internal solver log.
-            """
             vals = self.log.get("ni_reldiff", [])
             return len(vals) > 0 and vals[-1] < self.convergence_tol[0]
 
         def converged_ildos():
-            """
-            Has ILDOS converged?
-            Prefer an explicit ILDOS metric if available.
-            Fallback to ni_l2diff if no ILDOS-specific log exists.
-            """
             if len(self.log.get("ildos_meanreldiff", [])) > 0:
                 return self.log["ildos_meanreldiff"][-1] < self.convergence_tol[1]
 
-            # fallback if no dedicated ILDOS metric exists yet
             vals = self.log.get("ni_reldiff", [])
             return len(vals) > 0 and vals[-1] < self.convergence_tol[0]
 
         def qprime_is_stable(before, after):
-            """
-            Is Q \\ Q' decomposition OK?
-            """
             if qprime_stable_by == "len":
                 return len(before) == len(after)
-
-            # safer default: compare the set/content, not just the length
             try:
                 return np.array_equal(np.sort(np.asarray(before)), np.sort(np.asarray(after)))
             except Exception:
@@ -456,6 +444,14 @@ class FSC:
                 quantum_kwargs["num_sample"] = int(5 * self.Ncore)
             return quantum_kwargs
 
+        def register_solver(name):
+            nonlocal last_solver, same_solver_count
+            if last_solver == name:
+                same_solver_count += 1
+            else:
+                last_solver = name
+                same_solver_count = 1
+
         # save static metadata once
         if save:
             self.save_static_reference(snapshot_folder)
@@ -474,11 +470,16 @@ class FSC:
         poisson_ready_for_current_qprime = False
         quantum_ready_for_current_poisson = False
 
+        # new: streak tracker for solver switching
+        last_solver = None          # "poisson" or "quantum"
+        same_solver_count = 0
+
         while True:
             it = sum(iter_num)
             t_iter0 = time.perf_counter()
 
             print("Iteration counts [Step I, Step II, Step III]:", iter_num)
+            print(f"Solver streak: {last_solver}, {same_solver_count}")
             if hasattr(self, "print_iteration_summary"):
                 self.print_iteration_summary(it)
 
@@ -514,17 +515,7 @@ class FSC:
             qprime_after = np.asarray(self.Qprime).copy()
             self.log.setdefault("Qprime_len", []).append(len(qprime_after))
 
-            # if save and save_intermediate and snapshot_mode == "step":
-            #     self.save_snapshot(
-            #         f"iter_{it:04d}_stepI_qprime",
-            #         folder=snapshot_folder,
-            #         save_ildos=save_ildos
-            #     )
-
-            # If Qprime changed, decomposition is not yet stable.
-            # Follow the flowchart: repeat Step I.
             if not qprime_is_stable(qprime_before, qprime_after):
-                # Optional decomposition-side updates you already had
                 psolver.calculate_delta(self)
 
                 t0 = time.perf_counter()
@@ -537,6 +528,10 @@ class FSC:
                 poisson_ready_for_current_qprime = False
                 quantum_ready_for_current_poisson = False
 
+                # also reset streak, because decomposition changed
+                last_solver = None
+                same_solver_count = 0
+
                 self.log.setdefault("timing_total", []).append(time.perf_counter() - t_iter0)
 
                 if sum(iter_num) >= max_total_iter:
@@ -547,9 +542,66 @@ class FSC:
                 continue
 
             # =================================
+            # Forced switch safeguard
+            # If one solver has run too many times in a row,
+            # force the other solver once.
+            # =================================
+            if same_solver_count >= force_switch_after:
+                if last_solver == "poisson":
+                    t0 = time.perf_counter()
+                    self.update_Quantum(system, **build_quantum_kwargs())
+                    self.log.setdefault("timing_quantum", []).append(time.perf_counter() - t0)
+
+                    if save and save_intermediate and snapshot_mode == "step":
+                        self.save_snapshot(
+                            f"iter_{it:04d}_stepIII_quantum_forced",
+                            folder=snapshot_folder,
+                            save_ildos=save_ildos
+                        )
+
+                    iter_num[2] += 1
+                    quantum_ready_for_current_poisson = True
+                    register_solver("quantum")
+
+                    self.log.setdefault("timing_total", []).append(time.perf_counter() - t_iter0)
+
+                    if sum(iter_num) >= max_total_iter:
+                        print("Reached maximum iteration count during forced Quantum step.")
+                        save_final("max", it)
+                        break
+
+                    continue
+
+                elif last_solver == "quantum":
+                    t0 = time.perf_counter()
+                    self.update_Poisson()
+                    self.log.setdefault("timing_poisson", []).append(time.perf_counter() - t0)
+
+                    if save and save_intermediate and snapshot_mode == "step":
+                        self.save_snapshot(
+                            f"iter_{it:04d}_stepII_poisson_forced",
+                            folder=snapshot_folder,
+                            save_ildos=save_ildos
+                        )
+
+                    iter_num[1] += 1
+                    poisson_ready_for_current_qprime = True
+
+                    # new Poisson invalidates previous Quantum convergence
+                    quantum_ready_for_current_poisson = False
+                    register_solver("poisson")
+
+                    self.log.setdefault("timing_total", []).append(time.perf_counter() - t_iter0)
+
+                    if sum(iter_num) >= max_total_iter:
+                        print("Reached maximum iteration count during forced Poisson step.")
+                        save_final("max", it)
+                        break
+
+                    continue
+
+            # =================================
             # Step II: update Poisson problem
-            # Must happen at least once after Qprime becomes stable.
-            # Then keep doing it until n[U] is converged.
             # =================================
             if (not poisson_ready_for_current_qprime) or (not converged_nU()):
                 t0 = time.perf_counter()
@@ -569,6 +621,7 @@ class FSC:
 
                 # A new Poisson environment invalidates previous quantum convergence
                 quantum_ready_for_current_poisson = False
+                register_solver("poisson")
 
                 self.log.setdefault("timing_total", []).append(time.perf_counter() - t_iter0)
 
@@ -581,8 +634,6 @@ class FSC:
 
             # =================================
             # Step III: update Quantum / ILDOS problem
-            # Must happen at least once after Poisson is accepted.
-            # Then keep doing it until ILDOS is converged.
             # =================================
             if (not quantum_ready_for_current_poisson) or (not converged_ildos()):
                 t0 = time.perf_counter()
@@ -599,6 +650,7 @@ class FSC:
 
                 iter_num[2] += 1
                 quantum_ready_for_current_poisson = True
+                register_solver("quantum")
 
                 self.log.setdefault("timing_total", []).append(time.perf_counter() - t_iter0)
 

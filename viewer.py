@@ -6,7 +6,7 @@ import panel as pn
 
 from bokeh.plotting import figure
 from bokeh.models import ColumnDataSource, LinearColorMapper, ColorBar
-from bokeh.palettes import Turbo256
+from bokeh.palettes import Viridis256
 
 import matplotlib
 matplotlib.use("agg")
@@ -40,8 +40,11 @@ coords_all = np.array(static_data["coords_all"], dtype=float)  # (x, y, z)
 # Load snapshots
 # ----------------------------
 files = sorted(
-    f for f in glob.glob(os.path.join(log_folder, "*.npz"))
-    if "run_static" not in f
+    (
+        f for f in glob.glob(os.path.join(log_folder, "*.npz"))
+        if "run_static" not in f
+    ),
+    key=os.path.getctime
 )
 
 file_map = {os.path.basename(f): f for f in files}
@@ -324,7 +327,7 @@ fig = figure(
     match_aspect=True
 )
 
-mapper = LinearColorMapper(palette=Turbo256)
+mapper = LinearColorMapper(palette=Viridis256)
 
 renderer = fig.scatter(
     "x", "y",
@@ -620,7 +623,7 @@ def ldos_cut_plot(snapshot_name, cut_direction, cut_center, cut_width):
 
     ax_hm.set_xlabel("x" if cut_direction == "x" else "y")
     ax_hm.set_ylabel("Energy")
-    ax_hm.set_ylim((0.3*E0.min()),0.3*E0.max())
+    ax_hm.set_ylim((0.5*E0.min()),0.5*E0.max())
     ax_hm.set_title("LDOS heatmap along line cut")
     fig_hm.tight_layout()
     return pn.pane.Matplotlib(fig_hm, tight=True)

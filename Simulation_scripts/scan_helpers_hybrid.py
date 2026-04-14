@@ -44,8 +44,8 @@ PROGRESS_FIELDNAMES = [
     "iter_quantum",
     "qprime_len",
     "ui_maxdiff",
-    "ni_maxdiff",
-    "ildos_maxdiff",
+    "ni_reldiff",
+    "ildos_meanreldiff",
     "status",
     "restart_mode",
     "worker_pid",
@@ -138,12 +138,15 @@ def merge_chunk_progress_files(out_folder, chunk_ids):
 
 def reset_fsc_log(fsc):
     fsc.log = {
-        "Qprime_len": [len(fsc.Qprime) if hasattr(fsc, "Qprime") else 0],
+        "Qprime_len": [len(fsc.Qprime)],
         "Ui_maxdiff": [],
         "Ui_l2diff": [],
         "ni_maxdiff": [],
         "ni_l2diff": [],
+        "ni_reldiff": [],
         "ildos_maxdiff": [],
+        "ildos_l2diff":[],
+        "ildos_meanreldiff":[],
         "timing_poisson": [],
         "timing_quantum": [],
         "timing_total": [],
@@ -153,7 +156,7 @@ def reset_fsc_log(fsc):
 def build_fresh_fsc(FSC_cls, syst, phi, Vbg, fixed_params):
     qparams = {"Ufunc": lambda x: 0, "phi": phi}
 
-    fsc = FSC_cls(syst, ifinitial=False, qparams=qparams)
+    fsc = FSC_cls(syst, ifinitial=False, qparams=qparams,approx="TF")
 
     boundary_condition = {
         "gate": {"potential": fixed_params["gate_potential"]},
@@ -328,8 +331,8 @@ def _run_chunk(
                 "iter_quantum": len(fsc.log["timing_quantum"]) if fsc is not None else "",
                 "qprime_len": len(fsc.Qprime) if (fsc is not None and hasattr(fsc, "Qprime")) else "",
                 "ui_maxdiff": fsc.log["Ui_maxdiff"][-1] if (fsc is not None and len(fsc.log["Ui_maxdiff"])) else "",
-                "ni_maxdiff": fsc.log["ni_maxdiff"][-1] if (fsc is not None and len(fsc.log["ni_maxdiff"])) else "",
-                "ildos_maxdiff": fsc.log["ildos_maxdiff"][-1] if (fsc is not None and len(fsc.log["ildos_maxdiff"])) else "",
+                "ni_reldiff": fsc.log["ni_reldiff"][-1] if (fsc is not None and len(fsc.log["ni_reldiff"])) else "",
+                "ildos_meanreldiff": fsc.log["ildos_meanreldiff"][-1] if (fsc is not None and len(fsc.log["ildos_meanreldiff"])) else "",
                 "status": status,
                 "restart_mode": restart_mode,
                 "worker_pid": worker_pid,

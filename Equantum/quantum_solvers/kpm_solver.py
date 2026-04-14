@@ -213,11 +213,12 @@ def reconstruct_density(
     for k, E in enumerate(energies):
         x = (E - b) / a
 
+        if abs(x) >= 1.0:
+            continue   # leave rho[k] = 0
+
+        # only stabilize valid region
         if clip_x:
-            x = np.clip(x, -1.0 + 1e-12, 1.0 - 1e-12)
-        else:
-            if abs(x) >= 1.0:
-                continue
+            x = np.clip(x, -1 + 1e-12, 1 - 1e-12)
 
         T0 = 1.0
         s = mu_eff[0]

@@ -238,16 +238,16 @@ class QuantumSystem:
         return np.asarray(w, dtype=float), avg
 
     def get_ldos(self, fsc, qparams=None, approx="TF", Ncore=0, M=512, n_random=8, **kwargs):
-        emin, emax = self.get_energy_bounds()
+        bounds = self.get_energy_bounds(margin=0)
         nE_local = max(256, int(self.N / 2))
-        Erange = np.linspace(emin, emax, nE_local)
+        Erange = np.linspace(bounds[0],bounds[1], nE_local)
 
         if qparams is not None:
             self.update_qparams(qparams)
 
         if approx == "TF":
             print("LDOS is calculated through kpm as a whole system.")
-            bulk_E, bulk_rho = self.get_dos(w=Erange, M=M, n_random=n_random, **kwargs)
+            bulk_E, bulk_rho = self.get_dos(w=Erange, M=M, n_random=n_random, bounds=bounds,**kwargs)
             bulk_proj = project_ldos_to_global_grid(
                 bulk_E, bulk_rho, fsc.E_global, fsc.max_fill
             )
@@ -260,12 +260,12 @@ class QuantumSystem:
         elif approx == "kmeanssample":
             print("LDOS is caculated through kmeans sampling.")
             # already normalized per cluster inside sample_ldos
-            dataall = self.sample_ldos(fsc, Ncore=Ncore, M=M, **kwargs)
+            dataall = self.sample_ldos(fsc, Ncore=Ncore, M=M, bounds=bounds, **kwargs)
         elif approx == "ED":
             print("LDOS is calculated with ED method.")
             H = self.get_hamiltonian()
 
-            eta = kwargs.pop("eta", 0.02)
+            eta = kwargs.pop("eta", 0.00015)
             broadening = kwargs.pop("broadening", "gaussian")
 
             E_ed, rho_all = ed_ldos(
@@ -293,6 +293,7 @@ class QuantumSystem:
                         site_index=ii,
                         energies=Erange,
                         num_moments=M,
+                        bounds=bounds,
                         **kwargs
                     )
                     for ii in range(self.N)
@@ -306,6 +307,7 @@ class QuantumSystem:
                             site_index=ii,
                             energies=Erange,
                             num_moments=M,
+                            bounds=bounds,
                             **kwargs
                         )
                     )

@@ -57,7 +57,7 @@ class System:
             self.geometry.compute_voronoi()
             print("Voronoi cells have been created.")
             self.sites = systemfunc.create_sites_from_geometry_3d(self.geometry)
-            self.remove_dangling_site()
+            
         else:
             self.sites = systemfunc.create_sites_from_points_3d(self.geometry)
             
@@ -70,9 +70,10 @@ class System:
             if config_file is not None:
                 # Load configuration file defining regions and material properties.
                 self.update_sites_from_blender(filename=config_file)
+                self.remove_dangling_site()
             else:
                 self.update_sites_from_func()
-
+        
         # prune vacuum sites (safe: Blender guarantees naming)
         kept_ids, removed_ids = self.prune_vacuum_sites(shells_to_keep=2)
         self.apply_site_pruning(kept_ids)
