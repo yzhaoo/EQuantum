@@ -215,7 +215,7 @@ def _solve_current_point(fsc, syst, snapshot_folder, fixed_params):
         snapshot_folder=snapshot_folder,
         save_ildos=fixed_params["save_ildos"],
         ldos_method=fixed_params["ldos_method"],
-        eta=fixed_params["eta"],
+        #eta=fixed_params["eta"],
         M=fixed_params["M"],
         eps=fixed_params["eps"],
         kernel=fixed_params["kernel"],

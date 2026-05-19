@@ -17,7 +17,7 @@ print(f"[MAIN] PID = {pid}", flush=True)
 
     
 def density_function(z):
-    spacing0 = 0.011
+    spacing0 = 0.0075
     k = 0.2
     if abs(z) < 3 * spacing0:
         return spacing0
@@ -31,24 +31,24 @@ def main():
     "quantum_center": (0,0,0)     # optional, defaults to (0,0,0)
                 }
 
-    setuppathupdate = "/scratch/zhaoyuha/Datas/EQuantum_data/dotgate_center/setup/setup_7652d749b55d933a16606b6f95fbda03"
+    setuppathupdate = "/scratch/zhaoyuha/Datas/EQuantum_data/dotgate_center/setup/setup_1a3a0153de4a73f5077e76ca0d8ebcb8"
     config_file = setuppathupdate + "/updated_sites_dot.json"
-    out_folder = setuppathupdate + "/fsc_logs_scan"
+    out_folder = setuppathupdate + "/fsc_logs_scan_dense"
     os.makedirs(out_folder, exist_ok=True)
 
-    phis = np.linspace(0.08, 0.12, 20)
-    Vbgs = np.linspace(1, 1.5, 20)
+    phis = np.linspace(0.06, 0.08, 1)
+    Vbgs = np.linspace(1, 2, 100)
 
     fixed_params = {
         # Number of scan chunks / concurrent workers.
-        "Ncore": 20,
+        "Ncore": 2,
         # Cores used inside one FSC.solve(). Usually 1 for chunked parameter scans.
-        "solver_Ncore": 1,
+        "solver_Ncore": 50,
         "gate_potential": -1,
         "dielectric_constant": 4,
-        "convergence_tol": [1e-3,1e-1],
-        "ldos_method": "ED",
-        "eta": 0.00015,
+        "convergence_tol": [1e-3,2e-1],
+        "ldos_method": "kpm",
+        #"eta": 0.00015,
         "M": 256,
         "eps": 0.05,
         "kernel": "jackson",
